@@ -57,8 +57,9 @@ def test_update_from_sync_is_not_echoed(store):
 
 
 def test_expired_suppression_is_ignored(store, monkeypatch):
+    monkeypatch.setattr(watcher.time, "monotonic", lambda: 1000.0)
     watcher.suppress("k")
-    monkeypatch.setattr(watcher.time, "monotonic", lambda: 10_000_000.0)
+    monkeypatch.setattr(watcher.time, "monotonic", lambda: 1031.0)
     assert not watcher.is_suppressed("k")
 
 
@@ -78,3 +79,14 @@ def test_ignores_noise(store):
     xbmc.RPC_HANDLERS["VideoLibrary.GetMovieDetails"] = lambda p: {"moviedetails": {}}
     _note(store, 1)  # no usable ids
     assert store.pending() == []
+
+
+def test_failing_enqueue_is_logged_not_raised(store, monkeypatch):
+    _movie()
+
+    def boom(*a, **k):
+        raise RuntimeError("db locked")
+
+    monkeypatch.setattr(store, "enqueue", boom)
+    _note(store, 1)
+    assert any(lvl == xbmc.LOGWARNING and "db locked" in m for lvl, m in xbmc.LOG)

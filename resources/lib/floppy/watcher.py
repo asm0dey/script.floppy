@@ -7,6 +7,8 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+import xbmc
+
 from floppy.kodi_library import KodiItem, item_for
 from floppy.store import Store
 
@@ -50,8 +52,12 @@ def handle_notification(
         payload = json.loads(data)
         info = payload["item"]
         kind, playcount = info["type"], int(payload["playcount"])
-        if kind not in ("movie", "episode"):
-            return
+    except (ValueError, KeyError, TypeError) as exc:
+        xbmc.log(f"[Floppy] watcher: ignoring notification: {exc!r}", xbmc.LOGDEBUG)
+        return
+    if kind not in ("movie", "episode"):
+        return
+    try:
         item = item_for(kind, int(info["id"]))
         if item is None:
             return
@@ -59,5 +65,5 @@ def handle_notification(
         if is_suppressed(key) or recently_stopped(key):
             return
         mark(store, item, playcount > 0)
-    except Exception:  # noqa: BLE001 - a notification handler must never raise into Kodi
-        return
+    except Exception as exc:  # noqa: BLE001 - never raise into Kodi's notification callback
+        xbmc.log(f"[Floppy] watcher: {exc!r}", xbmc.LOGWARNING)
