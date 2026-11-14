@@ -27,3 +27,6 @@ class Addon:
 
     def getLocalizedString(self, string_id: int) -> str:  # noqa: N802
         return f"string:{string_id}"
+
+    def openSettings(self) -> None:  # noqa: N802
+        pass

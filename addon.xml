@@ -10,8 +10,16 @@
   <extension point="kodi.context.item">
     <menu id="kodi.core.main">
       <item library="context.py">
-        <label>Floppy</label>
-        <visible>String.IsEqual(ListItem.DBType,movie) | String.IsEqual(ListItem.DBType,episode) | String.IsEqual(ListItem.DBType,season) | String.IsEqual(ListItem.DBType,tvshow)</visible>
+        <label>30040</label>
+        <visible>(String.IsEqual(ListItem.DBType,movie) | String.IsEqual(ListItem.DBType,episode)) + !Integer.IsGreater(ListItem.PlayCount,0)</visible>
+      </item>
+      <item library="context.py">
+        <label>30041</label>
+        <visible>(String.IsEqual(ListItem.DBType,movie) | String.IsEqual(ListItem.DBType,episode)) + Integer.IsGreater(ListItem.PlayCount,0)</visible>
+      </item>
+      <item library="context.py">
+        <label>30042</label>
+        <visible>String.IsEqual(ListItem.DBType,season) | String.IsEqual(ListItem.DBType,tvshow)</visible>
       </item>
     </menu>
   </extension>

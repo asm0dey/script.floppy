@@ -1,0 +1,83 @@
+# Kodi Media Center language file
+# Addon Name: Floppy
+# Addon id: script.floppy
+msgid ""
+msgstr ""
+"Project-Id-Version: script.floppy\n"
+"Language: en_GB\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgctxt "#30000"
+msgid "General"
+msgstr ""
+
+msgctxt "#30001"
+msgid "Account"
+msgstr ""
+
+msgctxt "#30002"
+msgid "Sync"
+msgstr ""
+
+msgctxt "#30003"
+msgid "Actions"
+msgstr ""
+
+msgctxt "#30010"
+msgid "Server URL"
+msgstr ""
+
+msgctxt "#30011"
+msgid "Log in"
+msgstr ""
+
+msgctxt "#30012"
+msgid "API token (instead of logging in)"
+msgstr ""
+
+msgctxt "#30013"
+msgid "Log out"
+msgstr ""
+
+msgctxt "#30020"
+msgid "Scrobble playback"
+msgstr ""
+
+msgctxt "#30021"
+msgid "Sync watched state from Floppy"
+msgstr ""
+
+msgctxt "#30022"
+msgid "Sync interval (minutes)"
+msgstr ""
+
+msgctxt "#30023"
+msgid "Notify after sync"
+msgstr ""
+
+msgctxt "#30030"
+msgid "Sync now"
+msgstr ""
+
+msgctxt "#30031"
+msgid "Restore from Floppy"
+msgstr ""
+
+msgctxt "#30032"
+msgid "Push Kodi history to Floppy"
+msgstr ""
+
+msgctxt "#30040"
+msgid "Mark watched in Floppy"
+msgstr ""
+
+msgctxt "#30041"
+msgid "Mark unwatched in Floppy"
+msgstr ""
+
+msgctxt "#30042"
+msgid "Toggle watched in Floppy"
+msgstr ""

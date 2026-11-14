@@ -7,12 +7,14 @@ from typing import Any
 CALLS: list[tuple[str, tuple[Any, ...]]] = []
 # Answers for the dialogs that return something; tests may override.
 YESNO_ANSWER = True
+PROGRESS_CANCELED = False
 
 
 def reset() -> None:
-    global YESNO_ANSWER
+    global YESNO_ANSWER, PROGRESS_CANCELED
     CALLS.clear()
     YESNO_ANSWER = True
+    PROGRESS_CANCELED = False
 
 
 class Dialog:
@@ -31,3 +33,17 @@ class Dialog:
     def select(self, heading: str, items: list[str]) -> int:
         CALLS.append(("select", (heading, tuple(items))))
         return -1
+
+
+class DialogProgress:
+    def create(self, heading: str, message: str = "") -> None:
+        CALLS.append(("progress.create", (heading, message)))
+
+    def update(self, percent: int, message: str = "") -> None:
+        CALLS.append(("progress.update", (percent, message)))
+
+    def iscanceled(self) -> bool:
+        return PROGRESS_CANCELED
+
+    def close(self) -> None:
+        CALLS.append(("progress.close", ()))
