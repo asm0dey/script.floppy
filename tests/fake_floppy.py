@@ -79,7 +79,9 @@ class FakeFloppy:
         self._routes[(method, path)] = handler
 
     def __enter__(self) -> FakeFloppy:
-        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=self._server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
