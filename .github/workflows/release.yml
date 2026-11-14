@@ -1,0 +1,37 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # 3.11 is Kodi 21 (Omega)'s interpreter; see tests.yml.
+      UV_PYTHON: "3.11"
+    steps:
+      # Pinned by commit SHA, same as tests.yml; Renovate tracks the comment.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked --extra dev --no-install-project --no-build
+      - run: uv run --no-sync python tools/check_version.py "${{ github.ref_name }}"
+      - run: uv run --no-sync --no-build ruff check .
+      - run: uv run --no-sync --no-build pyright
+      - run: uv run --no-sync --no-build pytest -v --strict-markers
+      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+      - run: mise run zip
+      - name: Checksum
+        run: |
+          cd dist
+          sha256sum script.floppy-*.zip | tee script.floppy.zip.sha256 >> "$GITHUB_STEP_SUMMARY"
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/script.floppy-*.zip dist/*.sha256 \
+            --title "Floppy ${{ github.ref_name }}" \
+            --notes "Install script.floppy-*.zip in Kodi. SHA-256 in the attached .sha256 file."

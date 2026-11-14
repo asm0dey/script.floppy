@@ -13,6 +13,7 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tools"]
 
 [tool.ruff]
 target-version = "py311"
@@ -24,5 +25,5 @@ select = ["E", "F", "I", "UP", "B", "N"]
 
 [tool.pyright]
 include = ["resources", "tests", "service.py", "default.py", "context.py"]
-extraPaths = ["resources/lib", "tests/stubs"]
+extraPaths = ["resources/lib", "tests/stubs", "tools"]
 pythonVersion = "3.11"

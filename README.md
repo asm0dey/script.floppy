@@ -33,3 +33,14 @@ Floppy**, **Log out**, and toggles for scrobbling, pull sync and sync toasts.
 
 `mise run test`, `mise run lint`, `mise run zip`. The Kodi-only parts are
 checked by hand: see [docs/manual-test.md](docs/manual-test.md).
+
+## Releasing
+
+1. Bump `version` in `addon.xml`, commit.
+2. Tag `vX.Y.Z` (must equal the addon version) and push the tag. The
+   `release` workflow tests, builds the zip and publishes it as a GitHub
+   Release asset together with a `.sha256` file.
+3. In `asm0dey/kodi-splitflap`, update `external-addons.json` with the new
+   `zip_url`
+   (`https://github.com/<owner>/<repo>/releases/download/vX.Y.Z/script.floppy-X.Y.Z.zip`)
+   and the `sha256` from the release.
