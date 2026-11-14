@@ -1,0 +1,28 @@
+[project]
+name = "script-floppy"
+version = "0.1.0"
+description = "Kodi addon syncing watch state with a Floppy server"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "pyright"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N"]
+
+[tool.pyright]
+include = ["resources", "tests", "service.py", "default.py", "context.py"]
+extraPaths = ["resources/lib", "tests/stubs"]
+pythonVersion = "3.11"

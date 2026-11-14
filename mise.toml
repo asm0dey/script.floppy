@@ -1,0 +1,18 @@
+[env]
+UV_PYTHON = "3.11"
+
+[tools]
+python = "3.11"
+uv = "latest"
+
+[tasks.test]
+description = "Run the test suite"
+run = "uv run --extra dev pytest"
+
+[tasks.lint]
+description = "Ruff and pyright"
+run = ["uv run --extra dev ruff check .", "uv run --extra dev pyright"]
+
+[tasks.zip]
+description = "Build dist/script.floppy-<version>.zip"
+run = "python tools/build_addon.py"
