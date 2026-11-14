@@ -6,6 +6,7 @@ Pure: no I/O. Merge, never replace (spec "Sync engine -> Baseline", "Play counts
 from __future__ import annotations
 
 import hashlib
+import itertools
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -74,7 +75,12 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
     floppy_watched = by_key(watched)
     floppy_progress = by_key(progress)
     plan = MergePlan()
-    catch_up: dict[str, KodiItem] = {}  # ref key -> copy with the latest lastplayed
+    # Catch-up candidates grouped by identity: Kodi copies whose ref keys overlap are one item
+    # and must add one play, from the copy with the latest lastplayed.
+    group_of: dict[str, int] = {}
+    groups: dict[int, tuple[set[str], KodiItem]] = {}
+    group_ids = itertools.count()
+    progress_pushes: list[tuple[str, dict]] = []
 
     for item in library:
         playcount: int | None = None
@@ -86,7 +92,8 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
         kodi_watched = item.playcount > 0
         newly_watched = False
 
-        if w and w.get("watched"):
+        floppy_state = w.get("watched") if w else None
+        if w and floppy_state is True:
             floppy_count = w.get("play_count") or 0
             if not kodi_watched:
                 newly_watched = True
@@ -97,11 +104,18 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
             elif item.playcount < floppy_count:
                 playcount = floppy_count  # raise only; Floppy's count is never raised from Kodi
         elif kodi_watched and w is None:
-            # One catch-up per identity: Kodi copies of one item must not add several plays.
-            prev = catch_up.get(ref.key())
-            if prev is None or (item.lastplayed or "") > (prev.lastplayed or ""):
-                catch_up[ref.key()] = item
-        elif kodi_watched:  # Floppy explicitly unwatched: Floppy wins
+            keys = set(ref.keys())
+            best = item
+            for gid in {group_of[k] for k in keys if k in group_of}:
+                other_keys, other = groups.pop(gid)
+                keys |= other_keys
+                if (other.lastplayed or "") >= (best.lastplayed or ""):
+                    best = other
+            gid = next(group_ids)
+            groups[gid] = (keys, best)
+            for k in keys:
+                group_of[k] = gid
+        elif kodi_watched and floppy_state is False:  # explicitly unwatched: Floppy wins
             playcount = 0
             plan.unwatch_kodi += 1
 
@@ -126,11 +140,13 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
                 push_kodi_resume = True
             else:
                 resume = floppy_resume
+        if not (p and p.get("duration_seconds")):
+            resume = None  # Kodi needs a total to show a resume point
         if newly_watched:
             resume = None  # a watched item has no resume point; Kodi's is left as is
             push_kodi_resume = False
         if push_kodi_resume:
-            plan.to_floppy.append(
+            progress_pushes.append(
                 (
                     "progress",
                     {
@@ -146,20 +162,23 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
         if playcount is not None or resume is not None:
             plan.to_kodi.append(KodiWrite(item, playcount, lastplayed, resume))
 
-    for key, item in catch_up.items():
+    for _keys, item in groups.values():
+        key = item.ref.key()
+        played_at = kodi_time_to_utc_iso(item.lastplayed) if item.lastplayed else None
         payload = {
             **item.ref.payload(),
             "action": "stop",
             "manual": True,
             "completed": True,
             "ref_key": key,
-            "idempotency_key": hashlib.sha256(
-                f"{key}|{item.lastplayed or ''}".encode()
-            ).hexdigest(),
+            # UTC, so boxes in different timezones produce the same key for one viewing
+            "idempotency_key": hashlib.sha256(f"{key}|{played_at or ''}".encode()).hexdigest(),
         }
-        if item.lastplayed:
-            payload["played_at"] = kodi_time_to_utc_iso(item.lastplayed)
+        if played_at:
+            payload["played_at"] = played_at
         plan.to_floppy.append(("scrobble", payload))
-    plan.push_floppy = len(catch_up)
+    # Progress after every stop, so a completing stop never lands after and clears it.
+    plan.to_floppy += progress_pushes
+    plan.push_floppy = len(groups)
     plan.unmatched = len(unmatched) + rejected
     return plan

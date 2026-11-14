@@ -11,7 +11,7 @@ def _item(playcount=0, lastplayed=None, resume=0.0, total=0.0, dbid=1, ref=MOVIE
     return KodiItem("movie", dbid, ref, playcount, lastplayed, resume, total)
 
 
-def _w(watched=True, play_count=1, watched_at=None, ids=None):
+def _w(watched: object = True, play_count=1, watched_at=None, ids=None):
     return {
         "media_type": "movie",
         "ids": ids or {"imdb": "tt1"},
@@ -23,7 +23,7 @@ def _w(watched=True, play_count=1, watched_at=None, ids=None):
 
 def _p(
     position: float | None = 600,
-    duration=6000,
+    duration: float | None = 6000,
     completed=False,
     updated_at="2024-01-01T00:00:00Z",
     ids=None,
@@ -67,7 +67,7 @@ def test_kodi_watched_floppy_has_no_state_pushes_with_lastplayed():
                 "played_at": kodi_time_to_utc_iso("2024-03-04 05:06:07"),
                 "ref_key": key,
                 "idempotency_key": hashlib.sha256(
-                    f"{key}|2024-03-04 05:06:07".encode()
+                    f"{key}|{kodi_time_to_utc_iso('2024-03-04 05:06:07')}".encode()
                 ).hexdigest(),
             },
         )
@@ -252,3 +252,63 @@ def test_duplicate_kodi_copies_catch_up_once_with_latest_lastplayed():
     ((kind, payload),) = plan.to_floppy
     assert kind == "scrobble"
     assert payload["played_at"] == kodi_time_to_utc_iso("2024-08-01 20:00:00")
+
+
+def test_floppy_row_without_watched_bool_changes_nothing():
+    item = _item(playcount=1, lastplayed="2024-03-04 05:06:07")
+    no_flag = _w()
+    del no_flag["watched"]
+    for entry in (no_flag, _w(watched=None), _w(watched=0)):
+        plan = plan_baseline([item], [entry], [])
+        assert plan.to_kodi == []
+        assert plan.to_floppy == []
+        assert (plan.unwatch_kodi, plan.push_floppy) == (0, 0)
+
+
+def test_catch_up_once_for_copies_with_overlapping_ids():
+    imdb_only = Ref("movie", (("imdb", "tt1"),), None, None)
+    copies = [
+        _item(playcount=1, lastplayed="2024-08-01 20:00:00", dbid=1, ref=imdb_only),
+        _item(playcount=1, lastplayed="2024-03-04 05:06:07", dbid=2),  # tmdb + imdb
+    ]
+    plan = plan_baseline(copies, [], [])
+    assert plan.push_floppy == 1
+    ((_, payload),) = plan.to_floppy
+    assert payload["played_at"] == kodi_time_to_utc_iso("2024-08-01 20:00:00")
+
+
+def test_scrobbles_come_before_progress_pushes():
+    other = Ref("movie", (("imdb", "tt2"),), None, None)
+    library = [
+        _item(resume=300, total=6000, dbid=1),  # progress push
+        _item(playcount=1, dbid=2, ref=other),  # catch-up
+    ]
+    plan = plan_baseline(library, [], [])
+    assert [kind for kind, _ in plan.to_floppy] == ["scrobble", "progress"]
+
+
+def test_floppy_resume_without_duration_is_not_written():
+    for duration in (None, 0):
+        assert plan_baseline([_item()], [], [_p(duration=duration)]).to_kodi == []
+
+
+def test_episode_through_plan_baseline():
+    ref = Ref("episode", (("tvdb", "81189"),), 2, 5)
+    item = KodiItem("episode", 7, ref, 1, "2024-03-04 05:06:07", 0.0, 0.0)
+    entry = {
+        "media_type": "episode",
+        "ids": {"tvdb": "81189"},
+        "season_number": 2,
+        "episode_number": 5,
+        "watched": True,
+        "play_count": 4,
+    }
+    other_ep = {**entry, "episode_number": 6}
+    plan = plan_baseline([item], [entry, other_ep], [])
+    assert plan.to_kodi == [KodiWrite(item, 4, None, None)]
+    assert plan.unmatched == 1  # episode 6 is not in the library
+
+    ((kind, payload),) = plan_baseline([item], [], []).to_floppy
+    assert kind == "scrobble"
+    assert payload["ref_key"] == "episode:tvdb:81189:2:5"
+    assert (payload["season_number"], payload["episode_number"]) == (2, 5)
