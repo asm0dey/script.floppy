@@ -16,9 +16,7 @@ def main() -> None:
     out.parent.mkdir(exist_ok=True)
     files = [ROOT / "addon.xml", *sorted(ROOT.glob("*.py")), ROOT / "LICENSE"]
     files += sorted(
-        p
-        for p in (ROOT / "resources").rglob("*")
-        if p.is_file() and "__pycache__" not in p.parts
+        p for p in (ROOT / "resources").rglob("*") if p.is_file() and "__pycache__" not in p.parts
     )
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for f in files:

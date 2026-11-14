@@ -184,6 +184,14 @@ def test_newly_watched_drops_floppy_resume_and_merges_into_one_write():
     assert plan.to_kodi == [KodiWrite(item, 1, None, None)]
 
 
+def test_newly_watched_does_not_push_kodi_resume():
+    item = _item(resume=300, total=6000, lastplayed="2024-06-10 12:00:00")
+    for progress in ([], [_p(position=900, updated_at="2024-06-01T00:00:00Z")]):
+        plan = plan_baseline([item], [_w()], progress)
+        assert plan.to_floppy == []
+        assert plan.to_kodi == [KodiWrite(item, 1, None, None)]  # Kodi resume left unchanged
+
+
 def test_unwatch_and_resume_merge_into_one_write():
     item = _item(playcount=1)
     plan = plan_baseline([item], [_w(watched=False)], [_p(position=600, duration=6000)])
@@ -231,3 +239,16 @@ def test_duplicate_kodi_copies_both_see_floppy_state():
     a, b = _item(playcount=1, dbid=1), _item(playcount=1, dbid=2)
     plan = plan_baseline([a, b], [_w(play_count=1)], [])
     assert plan.to_floppy == []  # neither copy invents a catch-up play
+
+
+def test_duplicate_kodi_copies_catch_up_once_with_latest_lastplayed():
+    copies = [
+        _item(playcount=1, lastplayed="2024-03-04 05:06:07", dbid=1),
+        _item(playcount=1, lastplayed="2024-08-01 20:00:00", dbid=2),
+        _item(playcount=1, lastplayed=None, dbid=3),
+    ]
+    plan = plan_baseline(copies, [], [])
+    assert plan.push_floppy == 1
+    ((kind, payload),) = plan.to_floppy
+    assert kind == "scrobble"
+    assert payload["played_at"] == kodi_time_to_utc_iso("2024-08-01 20:00:00")

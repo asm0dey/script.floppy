@@ -74,6 +74,7 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
     floppy_watched = by_key(watched)
     floppy_progress = by_key(progress)
     plan = MergePlan()
+    catch_up: dict[str, KodiItem] = {}  # ref key -> copy with the latest lastplayed
 
     for item in library:
         playcount: int | None = None
@@ -96,20 +97,10 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
             elif item.playcount < floppy_count:
                 playcount = floppy_count  # raise only; Floppy's count is never raised from Kodi
         elif kodi_watched and w is None:
-            payload = {
-                **ref.payload(),
-                "action": "stop",
-                "manual": True,
-                "completed": True,
-                "ref_key": ref.key(),
-                "idempotency_key": hashlib.sha256(
-                    f"{ref.key()}|{item.lastplayed or ''}".encode()
-                ).hexdigest(),
-            }
-            if item.lastplayed:
-                payload["played_at"] = kodi_time_to_utc_iso(item.lastplayed)
-            plan.to_floppy.append(("scrobble", payload))
-            plan.push_floppy += 1
+            # One catch-up per identity: Kodi copies of one item must not add several plays.
+            prev = catch_up.get(ref.key())
+            if prev is None or (item.lastplayed or "") > (prev.lastplayed or ""):
+                catch_up[ref.key()] = item
         elif kodi_watched:  # Floppy explicitly unwatched: Floppy wins
             playcount = 0
             plan.unwatch_kodi += 1
@@ -136,7 +127,8 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
             else:
                 resume = floppy_resume
         if newly_watched:
-            resume = None  # a watched item has no resume point
+            resume = None  # a watched item has no resume point; Kodi's is left as is
+            push_kodi_resume = False
         if push_kodi_resume:
             plan.to_floppy.append(
                 (
@@ -154,5 +146,20 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
         if playcount is not None or resume is not None:
             plan.to_kodi.append(KodiWrite(item, playcount, lastplayed, resume))
 
+    for key, item in catch_up.items():
+        payload = {
+            **item.ref.payload(),
+            "action": "stop",
+            "manual": True,
+            "completed": True,
+            "ref_key": key,
+            "idempotency_key": hashlib.sha256(
+                f"{key}|{item.lastplayed or ''}".encode()
+            ).hexdigest(),
+        }
+        if item.lastplayed:
+            payload["played_at"] = kodi_time_to_utc_iso(item.lastplayed)
+        plan.to_floppy.append(("scrobble", payload))
+    plan.push_floppy = len(catch_up)
     plan.unmatched = len(unmatched) + rejected
     return plan
