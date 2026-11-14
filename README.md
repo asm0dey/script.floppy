@@ -29,6 +29,18 @@ unreachable are queued and sent later.
 Settings also hold **Sync now**, **Restore from Floppy**, **Push Kodi history to
 Floppy**, **Log out**, and toggles for scrobbling, pull sync and sync toasts.
 
+## Running alongside Trakt
+
+While you trial this addon next to the Trakt addon (`script.trakt`):
+
+1. In Floppy, turn **off** the recurring Trakt import (Settings → Integrations →
+   Trakt). Keep it only if you also watch on non-Kodi Trakt clients: for those,
+   the import is their only path into Floppy.
+2. In `script.trakt`, keep only the **scrobbler** and turn **off** its
+   Trakt → Kodi watched/playcount sync. This addon cannot tell those library
+   writes from a watched toggle you made yourself, so it would push each of them
+   to Floppy as a new play.
+
 ## Development
 
 `mise run test`, `mise run lint`, `mise run zip`. The Kodi-only parts are
@@ -42,5 +54,5 @@ checked by hand: see [docs/manual-test.md](docs/manual-test.md).
    Release asset together with a `.sha256` file.
 3. In `asm0dey/kodi-splitflap`, update `external-addons.json` with the new
    `zip_url`
-   (`https://github.com/<owner>/<repo>/releases/download/vX.Y.Z/script.floppy-X.Y.Z.zip`)
+   (`https://github.com/asm0dey/script.floppy/releases/download/vX.Y.Z/script.floppy-X.Y.Z.zip`)
    and the `sha256` from the release.

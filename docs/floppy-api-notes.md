@@ -20,6 +20,7 @@ All three endpoints accept either `application/json` or form-encoded bodies; suc
 - `POST /oauth/register` `{client_name}` (required, whitespace-collapsed, max 60 chars) -> `{client_id, client_name, grant_types, token_endpoint_auth_method: "none"}`.
 - `POST /oauth/device/authorization` `{client_id}` (no `scope` -> tracking preset: `scrobble:write progress:read progress:write watchlist:read watchlist:write catalog:read sync:read`) -> `{device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval}`. Rate limited.
 - (c) `POST /oauth/token`: **form-encoded** (the addon's choice; JSON works too). Device grant: `client_id`, `grant_type=urn:ietf:params:oauth:grant-type:device_code`, `device_code`. Refresh grant: `client_id`, `grant_type=refresh_token`, `refresh_token`. Response `{access_token, token_type: "Bearer", expires_in, refresh_token, scope}`. **Refresh rotates**: the old refresh token is revoked and a new one returned, so store both from every response. Reusing a revoked refresh token revokes the whole family.
+- `POST /oauth/revoke` `{token, client_id}` (form): revokes a refresh or access token; the addon calls it on **Log out**, best effort (`src/integrations/oauth_urls.py`).
 - Token errors: `authorization_pending`, `slow_down` (server also adds 5 s to its own interval; client adds 5 s too), `expired_token`, `access_denied`, `invalid_grant` (bad/used/revoked code or refresh token), `invalid_client`, `invalid_request`.
 
 ## Scrobble: `POST /api/v1/scrobble/`
@@ -28,7 +29,9 @@ Request (JSON): required `action` (`start|pause|stop|unwatch`), `media_type` (`m
 
 Response 200 `{"detail": "accepted"}`. `start`/`pause` only update live "now playing". `stop` records the watch/progress. `unwatch` retracts a watch and clears the resume point; an item Floppy never tracked is a 200 no-op. Errors: 400 `{detail}`, 404 `{detail, code: "MEDIA_NOT_FOUND"}`, 503 `{detail, code: "PROVIDER_UNAVAILABLE", retryable: true}` (retry later; it is a TMDB lookup failure).
 
-(d) **`Idempotency-Key` is honoured** on this endpoint: the header (or body `client_event_id`) keys a receipt, and a repeat with the same key replays the first response instead of re-executing. The outbox should send a stable key per queued event (e.g. `kodi-<outbox id>`).
+**Completion rule (`is_played`, `src/integrations/webhooks/generic_scrobble.py`):** an explicit `completed` wins; otherwise played means `position_seconds >= 0.9 * duration_seconds` (`PLAYBACK_SCROBBLE_MIN_PROGRESS_RATIO = 0.9`, `src/app/live_playback.py`). The addon uses the same 90 % rule and sends `completed` explicitly, so Kodi and Floppy agree.
+
+(d) **`Idempotency-Key` is honoured** on this endpoint: the header (or body `client_event_id`) keys a receipt, and a repeat with the same key replays the first response instead of re-executing. The outbox should send a stable key per queued event (e.g. `kodi-<outbox id>`). A key reused with a **different** body is a permanent **409** `{"error": {"type": "conflict_error", "code": "idempotency_conflict", ...}}` (`src/integrations/delivery.py` `_settle`); retrying never helps, so the outbox drops it with a warning.
 
 ## Progress
 

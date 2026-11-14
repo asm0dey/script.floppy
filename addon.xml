@@ -28,6 +28,6 @@
     <description lang="en_GB">Syncs watched state and resume points between Kodi and a self-hosted Floppy media tracker.</description>
     <platform>all</platform>
     <license>GPL-2.0-or-later</license>
-    <source>https://github.com/asm0dey/kodi-floppy-addon</source>
+    <source>https://github.com/asm0dey/script.floppy</source>
   </extension>
 </addon>
