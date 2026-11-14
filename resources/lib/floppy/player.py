@@ -64,14 +64,16 @@ class FloppyPlayer(xbmc.Player):
                 if item.get("type") in ("movie", "episode") and item.get("id", -1) > 0:
                     found = item_for(item["type"], item["id"])
                     return found.ref if found else None
-            # Not a library item: the infotag. Audio playback raises here, which is fine.
-            tag = self.getVideoInfoTag()
-            # Infotag ids of an episode are the episode's, not the show's: unusable.
-            if tag.getMediaType() != "movie":
-                return None
-            return Ref.from_uniqueid("movie", tag.getUniqueIDs())
         except (RuntimeError, KeyError):
+            pass  # not a library item: fall through to the infotag
+        try:
+            tag = self.getVideoInfoTag()
+        except RuntimeError:  # not playing video (audio)
             return None
+        # Infotag ids of an episode are the episode's, not the show's: unusable.
+        if tag.getMediaType() != "movie":
+            return None
+        return Ref.from_uniqueid("movie", tag.getUniqueIDs())
 
     def _send_live(self, action: str) -> None:
         if self._ref is None:

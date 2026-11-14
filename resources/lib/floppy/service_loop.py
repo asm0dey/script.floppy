@@ -158,10 +158,10 @@ class Service(xbmc.Monitor):
     def _sync(self, server: str, **kw) -> str:
         self._changed = 0
 
-        def suppress(ref_key: str, playcount: int | None) -> None:
+        def suppress(ref_key: str, playcount: int) -> None:
             self._changed += 1  # run_sync calls this for exactly the items it writes to Kodi
-            if playcount is not None:  # resume-only writes leave no token to swallow a toggle
-                watcher.suppress(ref_key, playcount)
+            # Matched by value: a user toggle changes the playcount, so it is never swallowed.
+            watcher.suppress(ref_key, playcount)
 
         return run_sync(self._store, server, suppress=suppress, **kw)
 

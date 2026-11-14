@@ -60,4 +60,7 @@ def test_flush_drops_idempotency_conflict_and_continues(store):
         fake.route("POST", "/api/v1/scrobble/", lambda r: next(answers))
         assert flush_outbox(store, fake.url) == 1
     assert store.pending() == []
-    assert any(lvl == xbmc.LOGWARNING and "status=409" in m for lvl, m in xbmc.LOG)
+    assert any(
+        lvl == xbmc.LOGWARNING and "status=409 code=idempotency_conflict" in m
+        for lvl, m in xbmc.LOG
+    )

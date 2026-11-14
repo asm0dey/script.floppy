@@ -210,3 +210,19 @@ def test_audio_playback_logs_nothing(store, monkeypatch):
     p.onPlayBackStopped()
     assert store.pending() == []
     assert not any(lvl >= xbmc.LOGWARNING for lvl, _ in xbmc.LOG)
+
+
+def test_failed_library_lookup_falls_back_to_infotag(store):
+    xbmc.RPC_HANDLERS["Player.GetActivePlayers"] = lambda p: [{"playerid": 1, "type": "video"}]
+    xbmc.RPC_HANDLERS["Player.GetItem"] = lambda p: {"item": {"id": 7, "type": "movie"}}
+
+    def broken(p):
+        raise KeyError("moviedetails")
+
+    xbmc.RPC_HANDLERS["VideoLibrary.GetMovieDetails"] = broken
+    p = _player(store)
+    p.infotag.media_type = "movie"
+    p.infotag.unique_ids = {"imdb": "tt0133093"}
+    _play(p, 100, 8160)
+    p.onPlayBackStopped()
+    assert store.pending()[0][2]["ids"] == {"imdb": "tt0133093"}

@@ -190,7 +190,7 @@ def test_baseline_result_toasts_summary(store, fake_sync, monkeypatch):
 
 def test_incremental_toasts_only_with_notify_sync_and_changes(store, fake_sync, monkeypatch):
     def sync(store, server, *, confirm, suppress, force_baseline=False):
-        suppress("movie:tmdb:603", None)
+        suppress("movie:tmdb:603", 0)
         return "incremental"
 
     monkeypatch.setattr(service_loop, "run_sync", sync)
@@ -252,14 +252,17 @@ def test_user_toggle_after_resume_only_write_is_pushed_and_flushed(store, fake_s
     }
 
     def sync(store, server, *, confirm, suppress, force_baseline=False):
-        suppress("movie:tmdb:603", None)  # resume point only
+        suppress("movie:tmdb:603", 0)  # resume point only; playcount stays 0
         return "incremental"
 
     monkeypatch.setattr(service_loop, "run_sync", sync)
     service = service_loop.Service(store)
     service.tick(1000.0)
+    echo = '{"item": {"id": 7, "type": "movie"}, "playcount": 0}'
+    service.onNotification("xbmc", "VideoLibrary.OnUpdate", echo)  # Kodi echoes the write
+    assert store.pending() == []
     data = '{"item": {"id": 7, "type": "movie"}, "playcount": 1}'
-    service.onNotification("xbmc", "VideoLibrary.OnUpdate", data)
+    service.onNotification("xbmc", "VideoLibrary.OnUpdate", data)  # the user's toggle
     [(_, _, p)] = store.pending()
     assert p["action"] == "stop"
     service.tick(1005.0)  # next tick, not the next poll interval

@@ -25,7 +25,9 @@ def _error(status: int, raw: bytes) -> FloppyError:
         body = None
     if not isinstance(body, dict):
         body = {}
-    code = body.get("code") or body.get("error")
+    error = body.get("error")
+    # Plain {"code"}, OAuth {"error": "..."} or Floppy's nested {"error": {"code": ...}}.
+    code = body.get("code") or (error.get("code") if isinstance(error, dict) else error)
     return FloppyError(status, code if isinstance(code, str) else None, body, f"HTTP {status}")
 
 

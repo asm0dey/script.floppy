@@ -19,8 +19,8 @@ _ENDPOINTS = {
     "progress": ("PUT", "/api/v1/playback/progress/"),
 }
 _RETRY_LATER = (401, 429)
-# Kodi write callback: (ref_key, new playcount or None when the playcount is unchanged).
-OnWrite = Callable[[str, int | None], None]
+# Kodi write callback: (ref_key, playcount the item has after the write).
+OnWrite = Callable[[str, int], None]
 
 
 def flush_outbox(store: Store, server: str) -> int:
@@ -159,8 +159,7 @@ def _baseline(
     if confirm is not None and not confirm(plan):
         return "cancelled"
     for w in plan.to_kodi:
-        changes_playcount = w.playcount is not None and w.playcount != w.item.playcount
-        suppress(w.item.ref.key(), w.playcount if changes_playcount else None)
+        suppress(w.item.ref.key(), w.item.playcount if w.playcount is None else w.playcount)
         write_item(w.item, playcount=w.playcount, lastplayed=w.lastplayed, resume=w.resume)
     for kind, payload in plan.to_floppy:
         store.enqueue(kind, payload)
@@ -237,6 +236,6 @@ def _apply(feed: str, entry: dict, item: KodiItem, suppress: OnWrite) -> None:
         resume = (0.0, 0.0)
     else:
         return
-    suppress(item.ref.key(), None)
+    suppress(item.ref.key(), item.playcount)  # Kodi may echo the unchanged playcount
     write_item(item, resume=resume)
     item.resume_position, item.resume_total = resume

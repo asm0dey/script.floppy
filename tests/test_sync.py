@@ -264,7 +264,7 @@ def test_progress_feed_sets_and_clears_resume(store, kodi_lib):
         {"movieid": 1, "resume": {"position": 0, "total": 0}},
         {"movieid": 2, "resume": {"position": 60, "total": 1200}},
     ]
-    assert suppressed == [(MOVIE_KEY, None), ("movie:tmdb:20", None)]  # resume only
+    assert suppressed == [(MOVIE_KEY, 0), ("movie:tmdb:20", 0)]  # resume only: unchanged
 
 
 def test_progress_feed_clears_resume_on_completed(store, kodi_lib):
