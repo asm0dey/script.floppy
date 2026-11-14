@@ -64,3 +64,10 @@ def test_request_network_error_has_no_status():
     with pytest.raises(FloppyError) as e:
         request("GET", f"http://127.0.0.1:{port}/", timeout=2)
     assert e.value.status is None
+
+
+def test_request_merges_extra_headers():
+    with FakeFloppy() as fake:
+        fake.route("POST", "/h", lambda r: (200, {"k": r.headers["Idempotency-Key"]}))
+        out = request("POST", fake.url + "/h", json_body={}, headers={"Idempotency-Key": "abc"})
+        assert out == {"k": "abc"}

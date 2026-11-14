@@ -8,7 +8,7 @@ from typing import Any
 
 LOGDEBUG, LOGINFO, LOGWARNING, LOGERROR = 0, 1, 2, 3
 
-RPC_HANDLERS: dict[str, Callable[[dict], dict]] = {}
+RPC_HANDLERS: dict[str, Callable[[dict], Any]] = {}
 LOG: list[tuple[int, str]] = []
 INFO_LABELS: dict[str, str] = {}
 
@@ -61,6 +61,26 @@ class Monitor:
         pass
 
 
+class InfoTagVideo:
+    def __init__(self) -> None:
+        self.media_type = ""
+        self.unique_ids: dict[str, str] = {}
+        self.season = -1
+        self.episode = -1
+
+    def getMediaType(self) -> str:  # noqa: N802
+        return self.media_type
+
+    def getUniqueIDs(self) -> dict[str, str]:  # noqa: N802
+        return self.unique_ids
+
+    def getSeason(self) -> int:  # noqa: N802
+        return self.season
+
+    def getEpisode(self) -> int:  # noqa: N802
+        return self.episode
+
+
 class Player:
     instances: list[Player] = []
 
@@ -68,6 +88,7 @@ class Player:
         self.playing_file: str | None = None
         self.time: float = 0.0
         self.total: float = 0.0
+        self.infotag = InfoTagVideo()
         Player.instances.append(self)
 
     def isPlaying(self) -> bool:  # noqa: N802
@@ -83,6 +104,9 @@ class Player:
 
     def getTotalTime(self) -> float:  # noqa: N802
         return self.total
+
+    def getVideoInfoTag(self) -> InfoTagVideo:  # noqa: N802
+        return self.infotag
 
     def __getattr__(self, name: str) -> Any:
         # Callbacks (onAVStarted, ...) are defined by subclasses; anything else is a test bug.

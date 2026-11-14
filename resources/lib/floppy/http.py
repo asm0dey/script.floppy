@@ -38,8 +38,9 @@ def request(
     json_body: dict | None = None,
     form: dict | None = None,
     timeout: float = 10,
+    headers: dict | None = None,
 ) -> dict:
-    headers = {"Accept": "application/json", "User-Agent": "script.floppy"}
+    headers = {"Accept": "application/json", "User-Agent": "script.floppy", **(headers or {})}
     data = None
     if json_body is not None:
         data = json.dumps(json_body).encode()
