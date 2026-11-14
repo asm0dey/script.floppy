@@ -190,7 +190,7 @@ def test_baseline_result_toasts_summary(store, fake_sync, monkeypatch):
 
 def test_incremental_toasts_only_with_notify_sync_and_changes(store, fake_sync, monkeypatch):
     def sync(store, server, *, confirm, suppress, force_baseline=False):
-        suppress("movie:tmdb:603")
+        suppress("movie:tmdb:603", None)
         return "incremental"
 
     monkeypatch.setattr(service_loop, "run_sync", sync)
@@ -219,3 +219,111 @@ def test_player_only_when_scrobbling_enabled(store, fake_sync):
     xbmcaddon.SETTINGS["scrobble_enabled"] = "false"
     service.tick(1005.0)
     assert service.player is None
+
+
+def test_sync_echoes_arriving_after_a_long_pass_are_suppressed(store, fake_sync, monkeypatch):
+    # Kodi queues OnUpdate until the service thread is back in waitForAbort.
+    clock = [1000.0]
+    monkeypatch.setattr(service_loop.watcher.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(service_loop.watcher, "_expected", {})
+    xbmc.RPC_HANDLERS["VideoLibrary.GetMovieDetails"] = lambda p: {
+        "moviedetails": {"uniqueid": {"tmdb": "603"}}
+    }
+
+    def sync(store, server, *, confirm, suppress, force_baseline=False):
+        suppress("movie:tmdb:603", 1)
+        suppress("movie:tmdb:603", 1)  # duplicate copy
+        clock[0] += 45  # longer than the old 30 s TTL
+        return "incremental"
+
+    monkeypatch.setattr(service_loop, "run_sync", sync)
+    service = service_loop.Service(store)
+    service.tick(1000.0)
+    data = '{"item": {"id": 7, "type": "movie"}, "playcount": 1}'
+    service.onNotification("xbmc", "VideoLibrary.OnUpdate", data)
+    service.onNotification("xbmc", "VideoLibrary.OnUpdate", data)
+    assert store.pending() == []
+
+
+def test_user_toggle_after_resume_only_write_is_pushed_and_flushed(store, fake_sync, monkeypatch):
+    monkeypatch.setattr(service_loop.watcher, "_expected", {})
+    xbmc.RPC_HANDLERS["VideoLibrary.GetMovieDetails"] = lambda p: {
+        "moviedetails": {"uniqueid": {"tmdb": "603"}}
+    }
+
+    def sync(store, server, *, confirm, suppress, force_baseline=False):
+        suppress("movie:tmdb:603", None)  # resume point only
+        return "incremental"
+
+    monkeypatch.setattr(service_loop, "run_sync", sync)
+    service = service_loop.Service(store)
+    service.tick(1000.0)
+    data = '{"item": {"id": 7, "type": "movie"}, "playcount": 1}'
+    service.onNotification("xbmc", "VideoLibrary.OnUpdate", data)
+    [(_, _, p)] = store.pending()
+    assert p["action"] == "stop"
+    service.tick(1005.0)  # next tick, not the next poll interval
+    assert len(FLUSHES) == 1
+
+
+def test_declined_preview_is_not_asked_again_by_timer(store, fake_sync, monkeypatch):
+    calls = []
+
+    def sync(store, server, *, confirm, suppress, force_baseline=False):
+        calls.append(force_baseline)
+        return "cancelled"
+
+    monkeypatch.setattr(service_loop, "run_sync", sync)
+    service = service_loop.Service(store)
+    service.tick(1000.0)
+    assert store.get("baseline_declined") == "1"
+    service.tick(1300.0)  # timer
+    service.onNotification("xbmc", "System.OnWake", "{}")
+    service.tick(1305.0)
+    service.onNotification("xbmc", "VideoLibrary.OnScanFinished", "null")
+    service.tick(1310.0)
+    assert len(calls) == 1 and len(FLUSHES) == 3  # automatic triggers only flush
+    service.onNotification("script.floppy", "Other.floppy.sync", "null")
+    service.tick(1315.0)
+    assert len(calls) == 2  # Sync now asks again
+    service.onNotification("script.floppy", "Other.floppy.restore", "null")
+    service.tick(1320.0)
+    assert calls[-1] is True
+
+
+def test_declined_restore_after_baseline_does_not_block_auto_sync(store, fake_sync, monkeypatch):
+    store.set("baseline_done", "1")
+    monkeypatch.setattr(service_loop, "run_sync", lambda *a, **kw: "cancelled")
+    service_loop.Service(store).tick(1000.0)
+    assert store.get("baseline_declined") is None
+
+
+def test_api_key_change_clears_auth_needed_and_is_not_rewritten(store, fake_sync, monkeypatch):
+    xbmcaddon.SETTINGS["api_key"] = "k1"
+    store.set("api_key", "k1")
+    store.set("auth_needed", "1")
+    writes = []
+    real_set = store.set
+    monkeypatch.setattr(store, "set", lambda k, v: writes.append(k) or real_set(k, v))
+    service = service_loop.Service(store)
+    service.tick(1000.0)
+    assert "api_key" not in writes and store.get("auth_needed") == "1"  # unchanged token
+    xbmcaddon.SETTINGS["api_key"] = "k2"
+    service.tick(1005.0)
+    assert store.get("api_key") == "k2" and store.get("auth_needed") is None
+    assert len(SYNCS) == 1
+
+
+def test_rejected_api_token_toasts_once(store):
+    from fake_floppy import FakeFloppy
+
+    xbmcaddon.SETTINGS["api_key"] = "bad"
+    with FakeFloppy() as fake:
+        fake.route("POST", "/api/v1/sync/bootstrap/", lambda r: (401, {"detail": "no"}))
+        xbmcaddon.SETTINGS["server_url"] = fake.url
+        service = service_loop.Service(store)
+        service.tick(1000.0)
+        service.tick(2000.0)
+        assert len(fake.requests) == 1
+    assert _notifications() == [("Floppy", "Floppy rejected the API token")]
+    assert store.get("auth_needed") == "1"

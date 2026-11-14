@@ -322,3 +322,19 @@ def test_no_catch_up_when_any_overlapping_copy_has_a_floppy_row():
         plan = plan_baseline([a, b], [_w(watched=watched, ids={"tmdb": "11"})], [])
         assert plan.to_floppy == []
         assert plan.push_floppy == 0
+
+
+def test_unparseable_timestamps_do_not_raise():
+    from floppy.kodi_library import KodiItem
+    from floppy.merge import plan_baseline
+    from floppy.refs import Ref
+
+    ref = Ref("movie", (("tmdb", "1"),), None, None)
+    item = KodiItem("movie", 1, ref, 1, "bogus", 300.0, 1000.0)
+    progress = [{"media_type": "movie", "ids": {"tmdb": "1"}, "position_seconds": 600,
+                 "duration_seconds": 1000, "completed": False, "updated_at": "nope"}]  # fmt: skip
+    watched = [{"media_type": "movie", "ids": {"tmdb": "1"}, "watched": True, "play_count": 2,
+                "watched_at": "nope"}]  # fmt: skip
+    plan = plan_baseline([item], watched, progress)
+    [w] = plan.to_kodi
+    assert (w.playcount, w.lastplayed, w.resume) == (2, None, (600.0, 1000.0))

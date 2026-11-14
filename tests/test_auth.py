@@ -139,3 +139,77 @@ def test_api_key_fallback_used_when_no_oauth(store):
 def test_nothing_usable_raises_auth_required(store):
     with pytest.raises(AuthRequired):
         auth.auth_headers(store, "http://x")
+
+
+def test_refresh_rate_limited_keeps_tokens(store):
+    _logged_in(store, expires_in=-10)
+    with FakeFloppy() as fake:
+        fake.route("POST", "/oauth/token", lambda r: (429, {"error": "rate_limited"}))
+        with pytest.raises(FloppyError) as err:
+            auth.auth_headers(store, fake.url)
+    assert not isinstance(err.value, AuthRequired) and err.value.status == 429
+    assert store.get("refresh_token") == "oldr" and store.get("access_token") == "old"
+
+
+def test_invalid_client_clears_tokens(store):
+    _logged_in(store, expires_in=-10)
+    with FakeFloppy() as fake:
+        fake.route("POST", "/oauth/token", lambda r: (401, {"error": "invalid_client"}))
+        with pytest.raises(AuthRequired):
+            auth.auth_headers(store, fake.url)
+    assert store.get("refresh_token") is None
+
+
+def test_concurrent_refresh_happens_once(store):
+    import threading
+
+    _logged_in(store, expires_in=-10)
+    release = threading.Event()
+    results = []
+
+    def token(r):
+        release.wait(2)  # hold the first refresh until the other thread is waiting
+        return 200, _tokens("new", "newr")
+
+    with FakeFloppy() as fake:
+        fake.route("POST", "/oauth/token", token)
+        threads = [
+            threading.Thread(target=lambda: results.append(auth.auth_headers(store, fake.url)))
+            for _ in range(2)
+        ]
+        for t in threads:
+            t.start()
+        time.sleep(0.2)
+        release.set()
+        for t in threads:
+            t.join(5)
+        refreshes = [r for r in fake.requests if r.path == "/oauth/token"]
+    assert len(refreshes) == 1
+    assert results == [{"token": "new"}, {"token": "new"}]
+
+
+def test_401_after_another_thread_refreshed_reuses_its_token(store):
+    _logged_in(store)
+    seen = []
+
+    def api(r):
+        seen.append(r.headers["Authorization"])
+        if len(seen) == 1:
+            # Meanwhile another thread rotated the tokens.
+            store.set("access_token", "other")
+            return 401, {}
+        return 200, {}
+
+    with FakeFloppy() as fake:
+        fake.route("GET", "/api/v1/x/", api)
+        auth.call(store, fake.url, "GET", "/api/v1/x/")
+        assert not any(r.path == "/oauth/token" for r in fake.requests)
+    assert seen == ["Bearer old", "Bearer other"]
+
+
+def test_api_key_401_raises_api_key_rejected(store):
+    store.set("api_key", "k")
+    with FakeFloppy() as fake:
+        fake.route("GET", "/api/v1/x/", lambda r: (401, {}))
+        with pytest.raises(auth.ApiKeyRejected):
+            auth.call(store, fake.url, "GET", "/api/v1/x/")

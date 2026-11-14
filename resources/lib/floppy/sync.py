@@ -18,14 +18,17 @@ _ENDPOINTS = {
     "scrobble": ("POST", "/api/v1/scrobble/"),
     "progress": ("PUT", "/api/v1/playback/progress/"),
 }
-_RETRY_LATER = (401, 409, 429)
+_RETRY_LATER = (401, 429)
+# Kodi write callback: (ref_key, new playcount or None when the playcount is unchanged).
+OnWrite = Callable[[str, int | None], None]
 
 
 def flush_outbox(store: Store, server: str) -> int:
     """Send queued writes oldest first; returns how many were sent successfully.
 
-    Drops items the server rejects for good (4xx), stops at the first retryable failure
-    and lets AuthRequired (401 after refresh) propagate.
+    Drops items the server rejects for good (4xx, including 409 idempotency_conflict: a
+    reused key never succeeds), stops at the first retryable failure and lets
+    AuthRequired propagate.
     """
     sent = 0
     for id_, kind, payload in store.pending():
@@ -36,6 +39,7 @@ def flush_outbox(store: Store, server: str) -> int:
             call(store, server, method, path, json_body=body, headers=headers)
         except FloppyError as e:
             if e.status is None or e.status >= 500 or e.status in _RETRY_LATER:
+                xbmc.log(f"[Floppy] {kind} {id_} not sent, retrying later: {e}", xbmc.LOGINFO)
                 return sent
             xbmc.log(
                 f"[Floppy] dropping {kind} {id_}: status={e.status} code={e.code}", xbmc.LOGWARNING
@@ -47,7 +51,13 @@ def flush_outbox(store: Store, server: str) -> int:
     return sent
 
 
-_REBASELINE = {"cursor_expired", "cursor_invalid", "sync_reset_required", "sync_not_initialized"}
+_REBASELINE = {
+    (409, "cursor_expired"),
+    (409, "cursor_invalid"),
+    (409, "sync_reset_required"),
+    (409, "sync_not_initialized"),
+    (400, "invalid_context"),
+}
 _FEEDS = (
     ("watched", "/api/v1/sync/changes/", "cursor_watched"),
     ("progress", "/api/v1/sync/progress-changes/", "cursor_progress"),
@@ -61,12 +71,13 @@ def run_sync(
     server: str,
     *,
     confirm: Callable[[MergePlan], bool],
-    suppress: Callable[[str], None],
+    suppress: OnWrite,
     force_baseline: bool = False,
 ) -> str:
     """One sync pass; returns "deferred", "cancelled", "baseline" or "incremental".
 
-    AuthRequired and FloppyErrors other than the re-baseline 409s propagate.
+    ``suppress`` is called before every Kodi write. AuthRequired and FloppyErrors other
+    than the re-baseline codes propagate.
     """
     flush_outbox(store, server)
     if force_baseline or not store.get("sync_context"):
@@ -75,7 +86,7 @@ def run_sync(
     try:
         _pull_feeds(store, server, suppress)
     except FloppyError as e:
-        if e.status != 409 or e.code not in _REBASELINE:
+        if (e.status, e.code) not in _REBASELINE:
             raise
         xbmc.log(f"[Floppy] feed says {e.code}: new baseline", xbmc.LOGINFO)
         ask = not store.get("baseline_done")
@@ -92,14 +103,16 @@ def _baseline(
     store: Store,
     server: str,
     confirm: Callable[[MergePlan], bool] | None,
-    suppress: Callable[[str], None],
+    suppress: OnWrite,
 ) -> str:
     try:
-        context = call(store, server, "POST", "/api/v1/sync/bootstrap/")["context"]
+        boot = call(store, server, "POST", "/api/v1/sync/bootstrap/")
     except FloppyError as e:
         if e.status == 409 and e.code == "sync_initializing":
             return "deferred"
         raise
+    context = boot["context"]
+    boot_cursors = boot.get("cursors") or {}
     snap = "/api/v1/sync/snapshot/"
     watched: list[dict] = []
     cursor_watched = after = None
@@ -113,9 +126,15 @@ def _baseline(
         if not page.get("has_more") or not after:
             break
     # Cursor before reading progress, so a change made meanwhile comes through the feed.
-    cursor_progress = _get(store, server, snap, context=context, resource="progress", limit=1)[
+    cursor_progress = _get(store, server, snap, context=context, resource="progress", limit=1).get(
         "cursor"
-    ]
+    )
+    # The bootstrap cursors predate both snapshots: a fallback that replays, never misses.
+    cursor_watched = cursor_watched or boot_cursors.get("watched")
+    cursor_progress = cursor_progress or boot_cursors.get("progress")
+    if not (cursor_watched and cursor_progress):
+        xbmc.log("[Floppy] baseline aborted: Floppy sent no feed cursor", xbmc.LOGERROR)
+        return "deferred"
     progress: list[dict] = []
     offset = 0
     while True:
@@ -136,11 +155,12 @@ def _baseline(
     library = load_library()
     if not library:
         return "deferred"  # library not scanned yet: never treat it as "nothing watched"
-    plan = plan_baseline(library, watched, progress)
+    plan = plan_baseline(library, watched, progress, store.pending_refs())
     if confirm is not None and not confirm(plan):
         return "cancelled"
     for w in plan.to_kodi:
-        suppress(w.item.ref.key())
+        changes_playcount = w.playcount is not None and w.playcount != w.item.playcount
+        suppress(w.item.ref.key(), w.playcount if changes_playcount else None)
         write_item(w.item, playcount=w.playcount, lastplayed=w.lastplayed, resume=w.resume)
     for kind, payload in plan.to_floppy:
         store.enqueue(kind, payload)
@@ -154,7 +174,7 @@ def _baseline(
     return "baseline"
 
 
-def _pull_feeds(store: Store, server: str, suppress: Callable[[str], None]) -> None:
+def _pull_feeds(store: Store, server: str, suppress: OnWrite) -> None:
     context = store.get("sync_context")
     index: LibraryIndex | None = None  # loaded only once a page has results
     for feed, path, cursor_key in _FEEDS:
@@ -168,12 +188,17 @@ def _pull_feeds(store: Store, server: str, suppress: Callable[[str], None]) -> N
                 pending = store.pending_refs()
                 unmatched = 0
                 for entry in results:
-                    ref = ref_from_floppy(entry)
-                    item = index.find(ref) if ref else None
-                    if item is None:
-                        unmatched += 1
-                    elif item.ref.key() not in pending:  # local unflushed change wins
-                        _apply(feed, entry, item, suppress)
+                    try:
+                        ref = ref_from_floppy(entry)
+                        item = index.find(ref) if ref else None
+                        if item is None:
+                            unmatched += 1
+                        elif item.ref.key() not in pending:  # local unflushed change wins
+                            _apply(feed, entry, item, suppress)
+                    except Exception as exc:  # noqa: BLE001 - one bad entry must not stall the feed
+                        xbmc.log(
+                            f"[Floppy] {feed} feed: skipping {entry!r}: {exc!r}", xbmc.LOGWARNING
+                        )
                 if unmatched:
                     xbmc.log(f"[Floppy] {feed} feed: {unmatched} not in Kodi library", xbmc.LOGINFO)
             cursor = page.get("next_cursor") or cursor
@@ -182,7 +207,7 @@ def _pull_feeds(store: Store, server: str, suppress: Callable[[str], None]) -> N
                 break
 
 
-def _apply(feed: str, entry: dict, item: KodiItem, suppress: Callable[[str], None]) -> None:
+def _apply(feed: str, entry: dict, item: KodiItem, suppress: OnWrite) -> None:
     """Write one feed entry to Kodi if it differs; keeps ``item`` in step with what was written."""
     if feed == "watched":
         state = entry.get("watched")
@@ -192,12 +217,12 @@ def _apply(feed: str, entry: dict, item: KodiItem, suppress: Callable[[str], Non
                 return
             at = entry.get("watched_at")
             lastplayed = utc_iso_to_kodi_time(at) if at else None
-            suppress(item.ref.key())
+            suppress(item.ref.key(), target)
             write_item(item, playcount=target, lastplayed=lastplayed)
             item.playcount = target
             item.lastplayed = lastplayed or item.lastplayed
         elif state is False and item.playcount > 0:
-            suppress(item.ref.key())
+            suppress(item.ref.key(), 0)
             write_item(item, playcount=0)
             item.playcount = 0
         return
@@ -212,6 +237,6 @@ def _apply(feed: str, entry: dict, item: KodiItem, suppress: Callable[[str], Non
         resume = (0.0, 0.0)
     else:
         return
-    suppress(item.ref.key())
+    suppress(item.ref.key(), None)
     write_item(item, resume=resume)
     item.resume_position, item.resume_total = resume

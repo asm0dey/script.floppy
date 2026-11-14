@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from floppy.kodi_library import KodiItem, LibraryIndex, kodi_time_to_utc_iso, utc_iso_to_kodi_time
 from floppy.refs import Ref, ref_from_floppy
 
 _RESUME_TOLERANCE = 5  # seconds; smaller differences are the same resume point
+_UTC = timezone.utc  # noqa: UP017 - datetime.UTC is 3.11+, some Kodi builds ship 3.10
 
 
 @dataclass
@@ -42,11 +43,21 @@ class MergePlan:
         return text
 
 
-def _parse(iso: str) -> datetime:
-    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+def _parse(iso: str | None) -> datetime | None:
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=_UTC)
 
 
-def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[dict]) -> MergePlan:
+def plan_baseline(
+    library: list[KodiItem],
+    watched: list[dict],
+    progress: list[dict],
+    pending: set[str] | frozenset[str] = frozenset(),
+) -> MergePlan:
+    """``pending``: ref keys with unflushed outbox writes; their items are left alone."""
     index = LibraryIndex(library)
     unmatched: set[Ref] = set()
     rejected = 0
@@ -88,11 +99,15 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
     for i, item in enumerate(library):
         for k in item.ref.keys():
             parent[root(i)] = root(first_with_key.setdefault(k, i))
+    # A local unflushed change wins: no Kodi write and no catch-up for that identity.
+    held = {root(i) for i, item in enumerate(library) if item.ref.key() in pending}
     catch_up: dict[int, KodiItem] = {}  # identity root -> copy with the latest lastplayed
     has_floppy_row: set[int] = set()
     progress_pushes: list[tuple[str, dict]] = []
 
     for i, item in enumerate(library):
+        if root(i) in held:
+            continue
         playcount: int | None = None
         lastplayed: str | None = None
         resume: tuple[float, float] | None = None
@@ -134,12 +149,9 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
         elif floppy_pos and abs(floppy_pos - item.resume_position) >= _RESUME_TOLERANCE:
             assert p is not None
             # Kodi has no resume timestamp; lastplayed stands in. Ties and gaps favour Floppy.
-            updated = p.get("updated_at")
-            kodi_newer = bool(
-                item.lastplayed
-                and updated
-                and _parse(kodi_time_to_utc_iso(item.lastplayed)) > _parse(updated)
-            )
+            kodi_at = _parse(kodi_time_to_utc_iso(item.lastplayed)) if item.lastplayed else None
+            floppy_at = _parse(p.get("updated_at"))
+            kodi_newer = bool(kodi_at and floppy_at and kodi_at > floppy_at)
             if kodi_newer:
                 push_kodi_resume = True
             else:

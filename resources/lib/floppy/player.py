@@ -10,11 +10,11 @@ import xbmc
 
 from .auth import AuthRequired, call
 from .http import FloppyError
-from .kodi_library import item_for, rpc
+from .kodi_library import item_for, rpc, utc_now_iso
 from .refs import Ref
 from .store import Store
 
-_COMPLETED_MARGIN = 30  # seconds before the end that count as finished
+_COMPLETED_RATIO = 0.9  # Floppy's is_played rule (PLAYBACK_SCROBBLE_MIN_PROGRESS_RATIO)
 _RECENT = 60.0
 
 
@@ -64,13 +64,14 @@ class FloppyPlayer(xbmc.Player):
                 if item.get("type") in ("movie", "episode") and item.get("id", -1) > 0:
                     found = item_for(item["type"], item["id"])
                     return found.ref if found else None
+            # Not a library item: the infotag. Audio playback raises here, which is fine.
+            tag = self.getVideoInfoTag()
+            # Infotag ids of an episode are the episode's, not the show's: unusable.
+            if tag.getMediaType() != "movie":
+                return None
+            return Ref.from_uniqueid("movie", tag.getUniqueIDs())
         except (RuntimeError, KeyError):
-            pass  # not a library item: fall through to the infotag
-        tag = self.getVideoInfoTag()
-        # Infotag ids of an episode are the episode's, not the show's: unusable.
-        if tag.getMediaType() != "movie":
             return None
-        return Ref.from_uniqueid("movie", tag.getUniqueIDs())
 
     def _send_live(self, action: str) -> None:
         if self._ref is None:
@@ -114,11 +115,19 @@ class FloppyPlayer(xbmc.Player):
         if ref is None or self._duration <= 0:
             return
         position = self._duration if ended else min(self._position, self._duration)
-        completed = position >= self._duration - _COMPLETED_MARGIN
+        completed = position >= _COMPLETED_RATIO * self._duration
         key = ref.key()
         times = {"position_seconds": position, "duration_seconds": self._duration}
         self._store.enqueue(
-            "scrobble", {"action": "stop", **ref.payload(), **times, "ref_key": key}
+            "scrobble",
+            {
+                "action": "stop",
+                **ref.payload(),
+                **times,
+                "completed": completed,
+                "played_at": utc_now_iso(),  # a flush after an outage must not redate the play
+                "ref_key": key,
+            },
         )
         self._store.enqueue(
             "progress",
@@ -130,5 +139,6 @@ class FloppyPlayer(xbmc.Player):
                 "ref_key": key,
             },
         )
-        self._stopped_at[key] = time.monotonic()
+        if completed:  # only then does Kodi bump the playcount itself
+            self._stopped_at[key] = time.monotonic()
         self._on_stopped()

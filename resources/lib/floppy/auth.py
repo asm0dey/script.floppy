@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 
@@ -10,10 +11,17 @@ from .store import Store
 
 _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 _TOKEN_KEYS = ("access_token", "refresh_token", "access_expires_at")
+_DEAD_GRANT = ("invalid_grant", "invalid_client")  # the only refresh errors that end a login
+# Refresh rotates the refresh token: two threads refreshing at once would revoke the family.
+_refresh_lock = threading.Lock()
 
 
 class AuthRequired(Exception):  # noqa: N818 (name fixed by the task interface)
     """No usable credentials; the user must log in again."""
+
+
+class ApiKeyRejected(AuthRequired):
+    """Floppy answered 401 to the API token."""
 
 
 def _store_tokens(store: Store, resp: dict) -> None:
@@ -70,7 +78,20 @@ def poll_login(
     return False
 
 
-def _refresh(store: Store, server: str) -> str:
+def _fresh(store: Store) -> bool:
+    return int(store.get("access_expires_at") or 0) - time.time() >= 60
+
+
+def _refresh(store: Store, server: str, stale: str | None) -> str:
+    """New access token in place of ``stale``; reuses one another thread already fetched."""
+    with _refresh_lock:
+        current = store.get("access_token")
+        if current and current != stale and _fresh(store):
+            return current
+        return _refresh_locked(store, server)
+
+
+def _refresh_locked(store: Store, server: str) -> str:
     try:
         resp = request(
             "POST",
@@ -82,7 +103,7 @@ def _refresh(store: Store, server: str) -> str:
             },
         )
     except FloppyError as e:
-        if e.status is not None and 400 <= e.status < 500:
+        if e.code in _DEAD_GRANT:
             for k in _TOKEN_KEYS:
                 store.set(k, None)
             raise AuthRequired("refresh token rejected") from e
@@ -92,10 +113,9 @@ def _refresh(store: Store, server: str) -> str:
 
 
 def auth_headers(store: Store, server: str) -> dict:
-    if store.get("refresh_token") and store.get("access_token"):
-        if int(store.get("access_expires_at") or 0) - time.time() < 60:
-            return {"token": _refresh(store, server)}
-        return {"token": store.get("access_token")}
+    access = store.get("access_token")
+    if store.get("refresh_token") and access:
+        return {"token": access if _fresh(store) else _refresh(store, server, access)}
     if api_key := store.get("api_key"):
         return {"api_key": api_key}
     raise AuthRequired("not logged in")
@@ -103,9 +123,14 @@ def auth_headers(store: Store, server: str) -> dict:
 
 def call(store: Store, server: str, method: str, path: str, **kw) -> dict:
     url = server.rstrip("/") + path
+    creds = auth_headers(store, server)
     try:
-        return request(method, url, **auth_headers(store, server), **kw)
+        return request(method, url, **creds, **kw)
     except FloppyError as e:
-        if e.status != 401 or not store.get("refresh_token"):
+        if e.status != 401:
             raise
-    return request(method, url, token=_refresh(store, server), **kw)
+        if "api_key" in creds:
+            raise ApiKeyRejected("Floppy rejected the API token") from e
+        if not store.get("refresh_token"):
+            raise
+    return request(method, url, token=_refresh(store, server, creds.get("token")), **kw)

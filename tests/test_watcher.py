@@ -15,7 +15,7 @@ def store(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _clear_guard():
-    watcher._suppressed.clear()
+    watcher._expected.clear()
 
 
 def _movie(uid=None):
@@ -49,18 +49,61 @@ def test_kodi_ui_unwatch_pushes_unwatch(store):
 
 def test_update_from_sync_is_not_echoed(store):
     _movie()
-    watcher.suppress("movie:tmdb:603")
+    watcher.suppress("movie:tmdb:603", 1)
     _note(store, 1)
     assert store.pending() == []
-    _note(store, 1)  # guard is consumed on first match
+    _note(store, 1)  # one expectation, one notification
     assert len(store.pending()) == 1
 
 
-def test_expired_suppression_is_ignored(store, monkeypatch):
-    monkeypatch.setattr(watcher.time, "monotonic", lambda: 1000.0)
-    watcher.suppress("k")
-    monkeypatch.setattr(watcher.time, "monotonic", lambda: 1031.0)
-    assert not watcher.is_suppressed("k")
+def test_notifications_after_a_long_pass_are_still_suppressed(store, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(watcher.time, "monotonic", lambda: clock[0])
+    _movie()
+    watcher.suppress("movie:tmdb:603", 1)  # written at the start of the pass
+    clock[0] = 1045.0  # the pass took 45 s; Kodi delivers OnUpdate only now
+    watcher.arm_expiry()
+    clock[0] = 1046.0
+    _note(store, 1)
+    assert store.pending() == []
+
+
+def test_expectation_expires_60s_after_arming(store, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(watcher.time, "monotonic", lambda: clock[0])
+    watcher.suppress("k", 1)
+    clock[0] = 5000.0  # unarmed: never expires
+    assert watcher.is_suppressed("k", 1)
+    watcher.suppress("k", 1)
+    watcher.arm_expiry()
+    clock[0] = 5061.0
+    assert not watcher.is_suppressed("k", 1)
+
+
+def test_duplicate_copies_each_suppressed(store):
+    _movie()
+    watcher.suppress("movie:tmdb:603", 1)
+    watcher.suppress("movie:tmdb:603", 1)  # two Kodi copies of one movie
+    _note(store, 1)
+    _note(store, 1)
+    assert store.pending() == []
+
+
+def test_two_writes_to_one_item_match_by_value(store):
+    _movie()
+    watcher.suppress("movie:tmdb:603", 1)
+    watcher.suppress("movie:tmdb:603", 3)
+    _note(store, 3)
+    _note(store, 1)
+    assert store.pending() == []
+
+
+def test_toggle_to_a_different_value_is_pushed(store):
+    _movie()
+    watcher.suppress("movie:tmdb:603", 1)
+    _note(store, 0)  # the user unwatched it: not the value sync wrote
+    [(_, _, p)] = store.pending()
+    assert p["action"] == "unwatch"
 
 
 def test_playback_end_playcount_not_double_pushed(store):

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import xbmc
 
@@ -143,15 +144,32 @@ def write_item(
 
 
 _KODI_FMT = "%Y-%m-%d %H:%M:%S"
+_ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
+# datetime.UTC is 3.11+; some Kodi builds still ship 3.10.
+_UTC = timezone.utc  # noqa: UP017
 
 
-def kodi_time_to_utc_iso(lastplayed: str) -> str:
-    local = datetime.strptime(lastplayed, _KODI_FMT).astimezone()
-    return local.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+def utc_now_iso() -> str:
+    return datetime.now(_UTC).strftime(_ISO_FMT)
 
 
-def utc_iso_to_kodi_time(iso: str) -> str:
-    dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone().strftime(_KODI_FMT)
+def kodi_time_to_utc_iso(lastplayed: str) -> str | None:
+    """Kodi local time -> UTC ISO; None when unparseable."""
+    try:
+        # Not datetime.strptime: in Kodi's embedded Python it can raise
+        # "TypeError: 'NoneType' object is not callable" on a second interpreter.
+        local = datetime(*time.strptime(lastplayed, _KODI_FMT)[:6]).astimezone()
+        return local.astimezone(_UTC).strftime(_ISO_FMT)
+    except (ValueError, TypeError, OSError, OverflowError):
+        return None
+
+
+def utc_iso_to_kodi_time(iso: str) -> str | None:
+    """UTC ISO (any offset) -> Kodi local time; None when unparseable."""
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_UTC)
+        return dt.astimezone().strftime(_KODI_FMT)
+    except (ValueError, TypeError, OSError, OverflowError, AttributeError):
+        return None

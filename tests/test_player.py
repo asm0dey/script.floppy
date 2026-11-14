@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -59,8 +60,11 @@ def test_movie_stop_enqueues_scrobble_and_progress(store):
         "ids": {"tmdb": "603"},
         "position_seconds": 8150,
         "duration_seconds": 8160,
+        "completed": True,
+        "played_at": scrobble["played_at"],
         "ref_key": "movie:tmdb:603",
     }
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", scrobble["played_at"])
     assert progress["position_seconds"] is None and progress["completed"] is True
     assert progress["ref_key"] == "movie:tmdb:603"
     assert p.recently_stopped("movie:tmdb:603")
@@ -170,3 +174,39 @@ def test_non_library_episode_is_skipped(store):
     _play(p, 100, 2400)
     p.onPlayBackStopped()
     assert store.pending() == []
+
+
+def test_stop_at_92_percent_is_completed(store):
+    _library()
+    p = _player(store)
+    _play(p, 920, 1000)
+    p.onPlayBackStopped()
+    (_, _, scrobble), (_, _, progress) = store.pending()
+    assert scrobble["completed"] is True
+    assert (progress["position_seconds"], progress["completed"]) == (None, True)
+    assert p.recently_stopped("movie:tmdb:603")
+
+
+def test_stop_at_85_percent_keeps_resume_and_no_recent_stop(store):
+    _library()
+    p = _player(store)
+    _play(p, 850, 1000)
+    p.onPlayBackStopped()
+    (_, _, scrobble), (_, _, progress) = store.pending()
+    assert scrobble["completed"] is False
+    assert (progress["position_seconds"], progress["completed"]) == (850, False)
+    assert not p.recently_stopped("movie:tmdb:603")  # a later Kodi-UI toggle still goes out
+
+
+def test_audio_playback_logs_nothing(store, monkeypatch):
+    xbmc.RPC_HANDLERS["Player.GetActivePlayers"] = lambda p: [{"playerid": 0, "type": "audio"}]
+    p = _player(store)
+
+    def no_video():
+        raise RuntimeError("Kodi is not playing any videofile")
+
+    monkeypatch.setattr(p, "getVideoInfoTag", no_video)
+    _play(p, 10, 200)
+    p.onPlayBackStopped()
+    assert store.pending() == []
+    assert not any(lvl >= xbmc.LOGWARNING for lvl, _ in xbmc.LOG)

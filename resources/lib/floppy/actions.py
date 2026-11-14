@@ -67,6 +67,7 @@ def login(store: Store, server: str) -> None:
             dialog.ok("Floppy", "Login failed: the code expired or the request was denied.")
         return
     store.set("auth_needed", None)
+    store.set("baseline_declined", None)
     dialog.notification("Floppy", "Logged in to Floppy")
     _ask_service("floppy.sync")  # the service runs the first baseline, which asks first
 

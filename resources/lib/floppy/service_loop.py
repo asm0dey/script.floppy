@@ -12,7 +12,7 @@ import xbmcgui
 import xbmcvfs
 
 from floppy import watcher
-from floppy.auth import AuthRequired
+from floppy.auth import ApiKeyRejected, AuthRequired
 from floppy.http import FloppyError
 from floppy.merge import MergePlan
 from floppy.player import FloppyPlayer
@@ -70,9 +70,10 @@ class Service(xbmc.Monitor):
         if work := _TRIGGERS.get(method):
             self._pending.add(work)
         player = self.player
-        watcher.handle_notification(
+        if watcher.handle_notification(
             self._store, method, data, player.recently_stopped if player else lambda key: False
-        )
+        ):
+            self._pending.add("flush")  # send the Kodi-UI toggle on the next tick
 
     def playback_stopped(self) -> None:
         self._sync_after = time.monotonic() + _STOP_DELAY
@@ -95,7 +96,10 @@ class Service(xbmc.Monitor):
     def _tick(self, now: float) -> None:
         addon = xbmcaddon.Addon()
         server = addon.getSetting("server_url").strip()
-        self._store.set("api_key", addon.getSetting("api_key").strip() or None)  # mirror
+        api_key = addon.getSetting("api_key").strip() or None
+        if api_key != self._store.get("api_key"):  # mirror; a new token gets a fresh try
+            self._store.set("api_key", api_key)
+            self._store.set("auth_needed", None)
         self._update_player(_flag(addon, "scrobble_enabled", True), server)
         if not server or self._store.get("auth_needed"):
             return
@@ -115,8 +119,11 @@ class Service(xbmc.Monitor):
         if "auto" in work or "sync" in work or "restore" in work:
             self._last_sync = now  # a failure retries at the next interval, not every tick
 
+        if work & {"sync", "restore"}:  # explicit: ask again even after a declined preview
+            self._store.set("baseline_declined", None)
+        declined = bool(self._store.get("baseline_declined"))
         sync_enabled = _flag(addon, "sync_enabled", True)
-        auto = sync_enabled and bool(work & {"auto", "rescan"})
+        auto = sync_enabled and bool(work & {"auto", "rescan"}) and not declined
         silent = False
         try:
             if "restore" in work:
@@ -130,13 +137,18 @@ class Service(xbmc.Monitor):
             else:
                 flush_outbox(self._store, server)
                 return
-        except AuthRequired:
+        except AuthRequired as e:
             self._store.set("auth_needed", "1")
-            _toast("Please log in again")
+            rejected = isinstance(e, ApiKeyRejected)
+            _toast("Floppy rejected the API token" if rejected else "Please log in again")
             return
         except FloppyError as e:
             xbmc.log(f"[Floppy] sync failed, retrying next interval: {e}", xbmc.LOGWARNING)
             return
+        finally:
+            watcher.arm_expiry()  # Kodi delivers the pass's OnUpdates only after it returns
+        if result == "cancelled" and not self._store.get("baseline_done"):
+            self._store.set("baseline_declined", "1")  # no re-prompt until Sync now / Restore
         if result == "baseline" and not (silent and not self._changed):  # no toast per scan
             _toast(self._store.get("last_summary") or "Synced with Floppy")
         elif result == "incremental" and self._changed and _flag(addon, "notify_sync", False):
@@ -146,9 +158,10 @@ class Service(xbmc.Monitor):
     def _sync(self, server: str, **kw) -> str:
         self._changed = 0
 
-        def suppress(ref_key: str) -> None:
-            self._changed += 1  # run_sync suppresses exactly the items it writes to Kodi
-            watcher.suppress(ref_key)
+        def suppress(ref_key: str, playcount: int | None) -> None:
+            self._changed += 1  # run_sync calls this for exactly the items it writes to Kodi
+            if playcount is not None:  # resume-only writes leave no token to swallow a toggle
+                watcher.suppress(ref_key, playcount)
 
         return run_sync(self._store, server, suppress=suppress, **kw)
 

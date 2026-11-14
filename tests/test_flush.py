@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import xbmc
 from fake_floppy import FakeFloppy
 from floppy.store import Store
 from floppy.sync import flush_outbox
@@ -41,10 +42,22 @@ def test_flush_drops_400_keeps_on_500(store):
     assert [p["ref_key"] for _, _, p in store.pending()] == ["r3"]
 
 
-def test_flush_keeps_on_429_and_409(store):
+def test_flush_keeps_on_429_and_logs_retry(store):
     store.enqueue("scrobble", _scrobble(1))
-    for status in (429, 409):
-        with FakeFloppy() as fake:
-            fake.route("POST", "/api/v1/scrobble/", lambda r, s=status: (s, {}))
-            assert flush_outbox(store, fake.url) == 0
-        assert len(store.pending()) == 1
+    with FakeFloppy() as fake:
+        fake.route("POST", "/api/v1/scrobble/", lambda r: (429, {}))
+        assert flush_outbox(store, fake.url) == 0
+    assert len(store.pending()) == 1
+    assert any("retrying later" in m for _, m in xbmc.LOG)
+
+
+def test_flush_drops_idempotency_conflict_and_continues(store):
+    store.enqueue("scrobble", _scrobble(1))
+    store.enqueue("scrobble", _scrobble(2))
+    conflict = {"error": {"code": "idempotency_conflict", "type": "conflict_error"}}
+    answers = iter([(409, conflict), (200, {})])
+    with FakeFloppy() as fake:
+        fake.route("POST", "/api/v1/scrobble/", lambda r: next(answers))
+        assert flush_outbox(store, fake.url) == 1
+    assert store.pending() == []
+    assert any(lvl == xbmc.LOGWARNING and "status=409" in m for lvl, m in xbmc.LOG)

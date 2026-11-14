@@ -131,3 +131,21 @@ def test_time_roundtrip(monkeypatch):
     finally:
         monkeypatch.undo()
         time.tzset()
+
+
+def test_time_helpers_return_none_on_bad_input():
+    assert kl.kodi_time_to_utc_iso("not a time") is None
+    assert kl.kodi_time_to_utc_iso("9999-99-99 00:00:00") is None
+    assert kl.utc_iso_to_kodi_time("garbage") is None
+    assert kl.utc_iso_to_kodi_time(None) is None  # type: ignore[arg-type]
+
+
+def test_kodi_time_parse_avoids_datetime_strptime(monkeypatch):
+    # Kodi's embedded Python can leave datetime.strptime unusable on a second interpreter.
+    class NoStrptime(kl.datetime):
+        @classmethod
+        def strptime(cls, *a):
+            raise TypeError("'NoneType' object is not callable")
+
+    monkeypatch.setattr(kl, "datetime", NoStrptime)
+    assert kl.kodi_time_to_utc_iso("2024-07-01 12:30:00") is not None
