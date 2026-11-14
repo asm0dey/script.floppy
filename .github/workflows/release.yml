@@ -10,6 +10,8 @@ jobs:
     env:
       # 3.11 is Kodi 21 (Omega)'s interpreter; see tests.yml.
       UV_PYTHON: "3.11"
+      # Through env, never ${{ }} inside run: a tag name must not become shell code.
+      TAG: ${{ github.ref_name }}
     steps:
       # Pinned by commit SHA, same as tests.yml; Renovate tracks the comment.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -18,7 +20,8 @@ jobs:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv sync --locked --extra dev --no-install-project --no-build
-      - run: uv run --no-sync python tools/check_version.py "${{ github.ref_name }}"
+      - run: uv run --no-sync python -c "import sys; assert sys.version.startswith('3.11'), sys.version"
+      - run: uv run --no-sync python tools/check_version.py "$TAG"
       - run: uv run --no-sync --no-build ruff check .
       - run: uv run --no-sync --no-build pyright
       - run: uv run --no-sync --no-build pytest -v --strict-markers
@@ -32,6 +35,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" dist/script.floppy-*.zip dist/*.sha256 \
-            --title "Floppy ${{ github.ref_name }}" \
+          gh release create "$TAG" dist/script.floppy-*.zip dist/*.sha256 \
+            --title "Floppy $TAG" \
             --notes "Install script.floppy-*.zip in Kodi. SHA-256 in the attached .sha256 file."
