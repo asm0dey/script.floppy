@@ -6,7 +6,7 @@
 
 **Architecture:** Pure-Python core under `resources/lib/floppy/` (HTTP, sqlite store, merge rules, sync engine) with thin Kodi edges (player monitor, library watcher, JSON-RPC, dialogs). All Floppy writes go through a persistent sqlite outbox. Pull uses Floppy's contract-2 sync API: bootstrap → snapshot baseline → `sync/changes` + `sync/progress-changes` feeds.
 
-**Tech Stack:** Python (3.8-compatible syntax), stdlib only at runtime (`urllib`, `json`, `sqlite3`); pytest + ruff for dev; mise for tasks.
+**Tech Stack:** Python 3.11 (Kodi 21's interpreter), stdlib only at runtime (`urllib`, `json`, `sqlite3`); uv-managed dev deps (pytest, ruff, pyright), mise tasks; GitHub Actions CI. Distributed through the existing Kodi repository `repository.splitflap` in `asm0dey/kodi-splitflap` (GitHub Pages).
 
 **Spec:** `docs/superpowers/specs/2026-11-14-kodi-floppy-addon-design.md`
 
@@ -14,7 +14,8 @@
 
 - Kodi 21 (Omega) minimum: `xbmc.python` version `3.0.1`.
 - Runtime: stdlib only. No `script.module.requests` or any other addon dependency.
-- Syntax ≤ Python 3.8 (ruff `target-version = "py38"`), `from __future__ import annotations` in every module.
+- Python 3.11 syntax floor (ruff `target-version = "py311"`), matching `kodi-splitflap`'s CI comment that 3.11 is Kodi 21's interpreter. CI matrix 3.11 and 3.13.
+- This addon lives in its own GitHub repo (not inside `kodi-splitflap`); creating that repo and touching `kodi-splitflap` need the user's go-ahead at execution time.
 - Addon id `script.floppy`, name `Floppy`, log prefix `[Floppy]`.
 - OAuth: `POST {server}/oauth/register` (`client_name`), `POST {server}/oauth/device/authorization` (`client_id`, no `scope` → tracking preset), `POST {server}/oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code` / `refresh_token`. Errors `authorization_pending`, `slow_down` (+5 s interval), `expired_token`, `access_denied`. API auth: `Authorization: Bearer <token>`; fallback `X-API-Key: <api token>`.
 - Client name: `Kodi on <xbmc.getInfoLabel('System.FriendlyName')>`, ≤ 60 chars.
@@ -73,7 +74,7 @@ mise.toml, pyproject.toml, renovate.json, .gitignore
 - [ ] **Step 1: Contract check against the user's instance.** Fetch `https://floppy.asm0dey.site/api/schema/` (ask the user for a token if it needs auth). Confirm the Global Constraints fields for scrobble, playback/progress, sync bootstrap/snapshot/changes/progress-changes, oauth. Record differences in `docs/floppy-api-notes.md`; if any constraint is wrong, stop and report before Task 2.
 - [ ] **Step 2: Write failing test** `tests/test_manifest.py::test_manifest_declares_entry_points` — parse `addon.xml`; assert id `script.floppy`, `xbmc.python` requires version `3.0.1`, extension points `xbmc.service` (library `service.py`), `xbmc.python.script` (library `default.py`), `kodi.context.item` with menu items for `context.py` visible on `String.IsEqual(ListItem.DBType,movie) | String.IsEqual(ListItem.DBType,episode) | String.IsEqual(ListItem.DBType,season) | String.IsEqual(ListItem.DBType,tvshow)`.
 - [ ] **Step 3: Run** `mise run test` → FAIL (no addon.xml).
-- [ ] **Step 4: Write** `addon.xml` and the tooling: `mise.toml` (python tool; tasks `test` = `pytest`, `lint` = `ruff check .`, `zip` = build `dist/script.floppy-<version>.zip` containing only addon files, excluding tests/docs/dev config), `pyproject.toml` (pytest, ruff dev deps; ruff py38), `renovate.json` in the precedent shape (`config:recommended`, `vulnerabilityAlerts` on, docker digests pinned, one grouped PR for non-major, majors/security separate, custom manager for the python version pin in `mise.toml`), `.gitignore` (`dist/`, `.venv/`, `__pycache__/`, `.claude/`).
+- [ ] **Step 4: Write** `addon.xml` and the tooling: `mise.toml` (python tool; tasks `test` = `pytest`, `lint` = `ruff check .`, `zip` = build `dist/script.floppy-<version>.zip` containing only addon files, excluding tests/docs/dev config), `pyproject.toml` (pytest, ruff, pyright dev deps via uv, `uv.lock` committed; ruff py311), `.github/workflows/tests.yml` (on push/PR: `uv sync --locked`, ruff, pyright, pytest on 3.11 and 3.13, `mise run zip`, upload artifact; actions pinned by commit SHA as in `kodi-splitflap`), `renovate.json` in the precedent shape (`config:recommended`, `vulnerabilityAlerts` on, docker digests pinned, one grouped PR for non-major, majors/security separate, custom manager for the python version pin in `mise.toml`), `.gitignore` (`dist/`, `.venv/`, `__pycache__/`, `.claude/`).
 - [ ] **Step 5: Run** `mise run test && mise run lint` → PASS.
 - [ ] **Step 6: Commit** `chore: scaffold script.floppy addon`.
 
@@ -276,3 +277,19 @@ Rules (from spec, each a test):
 - [ ] **Step 4: Run** `mise run test && mise run lint && mise run zip` → PASS; zip contains `script.floppy/addon.xml` and no `tests/`.
 - [ ] **Step 5: Write `docs/manual-test.md`** — on a real Kodi 21 against `https://floppy.asm0dey.site`: install zip; log in by code; first-sync preview shown and counts plausible; scrobble a movie and an episode (Now Playing card, one play each after the next Trakt import); mark watched/unwatched from context menu and Kodi UI, check Floppy; unwatch in Floppy web, Kodi follows within 5 min; delete addon data, reinstall, restore brings state back; second Kodi box sees first box's change.
 - [ ] **Step 6: Commit** `feat: service loop, settings and packaging`.
+
+### Task 10: Release and publish through the split-flap Kodi repository
+
+Mechanism *(my call)*: **pull, not push**. This repo publishes a zip as a GitHub Release asset; `kodi-splitflap`'s `tools/build_repo.py` learns to include external addons listed in a manifest. No cross-repo tokens.
+
+**Files (this repo):** Create `.github/workflows/release.yml`, `tools/check_version.py`, `tests/test_check_version.py`
+**Files (`asm0dey/kodi-splitflap`, separate branch + PR):** Create `external-addons.json`; modify `tools/build_repo.py`, `repository.splitflap/addon.xml`; add test in its `tests/`
+
+**Interfaces:**
+- Produces: release asset URL `https://github.com/<owner>/<repo>/releases/download/v<version>/script.floppy-<version>.zip`; `external-addons.json` = `[{"id": "script.floppy", "zip_url": "...", "sha256": "..."}]`.
+
+- [ ] **Step 1: Write failing test** `test_tag_must_match_addon_version` — `check_version("v1.2.0", addon_xml_with("1.2.0"))` passes; `"v1.2.1"` raises `SystemExit`.
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement** `tools/check_version.py`; `release.yml` on tag `v*`: check version, run tests, `mise run zip`, create GitHub Release with the zip and print its sha256. **Step 4: Run** → PASS. **Step 5: Commit** `ci: release workflow`.
+- [ ] **Step 6 (kodi-splitflap): Write failing test** `test_external_addon_included` — with a local zip served via `file://` URL in a temp `external-addons.json`, `build_repo` writes `docs/repo/script.floppy/script.floppy-<v>.zip` and an `<addon id="script.floppy">` entry in `addons.xml`; a wrong `sha256` or a zip whose `addon.xml` id differs fails the build.
+- [ ] **Step 7: Implement** in `build_repo.py`: after local discovery, download each manifest entry (`urllib`), verify sha256, read `<id>/addon.xml` from the zip, append to addons.xml, copy zip into the datadir. Update `repository.splitflap/addon.xml` summary/description to cover more than the split-flap addons (keep id and URLs — existing installs keep working), bump its version to `1.1.0`.
+- [ ] **Step 8: Run** its CI commands (`uv run ruff check . && uv run pyright && uv run pytest`) → PASS. Commit on a branch, open a PR for the user to review. Updating `external-addons.json` (URL + sha256) is the per-release step, documented in this repo's README.
