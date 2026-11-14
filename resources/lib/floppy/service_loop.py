@@ -95,8 +95,7 @@ class Service(xbmc.Monitor):
     def _tick(self, now: float) -> None:
         addon = xbmcaddon.Addon()
         server = addon.getSetting("server_url").strip()
-        if api_key := addon.getSetting("api_key").strip():
-            self._store.set("api_key", api_key)
+        self._store.set("api_key", addon.getSetting("api_key").strip() or None)  # mirror
         self._update_player(_flag(addon, "scrobble_enabled", True), server)
         if not server or self._store.get("auth_needed"):
             return

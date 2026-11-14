@@ -63,6 +63,8 @@ def login(store: Store, server: str) -> None:
     finally:
         progress.close()
     if not ok:
+        if not cancelled():
+            dialog.ok("Floppy", "Login failed: the code expired or the request was denied.")
         return
     store.set("auth_needed", None)
     dialog.notification("Floppy", "Logged in to Floppy")
@@ -80,6 +82,7 @@ def logout(store: Store, server: str) -> None:
             )
         except FloppyError as e:  # best effort: the local tokens go regardless
             xbmc.log(f"[Floppy] token revoke failed: {e}", xbmc.LOGWARNING)
+    xbmcaddon.Addon().setSetting("api_key", "")  # else the service copies it back
     for key in _LOGOUT_KEYS:
         store.set(key, None)
     xbmcgui.Dialog().notification("Floppy", "Logged out of Floppy")

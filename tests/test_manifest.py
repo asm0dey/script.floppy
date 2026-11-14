@@ -44,7 +44,8 @@ def test_settings_ids_and_actions() -> None:
     }  # fmt: skip
     for sid, s in settings.items():
         if s.get("type") == "action":
-            assert s.findtext("data") == f"RunScript(script.floppy,{sid})"
+            assert s.findtext("control/data") == f"RunScript(script.floppy,{sid})"
+            assert s.findtext("control/close") == "true"
     assert settings["api_key"].findtext("control/hidden") == "true"
     assert settings["api_key"].findtext("level") == "2"
     assert settings["poll_minutes"].findtext("default") == "5"

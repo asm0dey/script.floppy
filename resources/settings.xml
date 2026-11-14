@@ -15,11 +15,10 @@
         </setting>
         <setting id="login" type="action" label="30011">
           <level>0</level>
-          <data>RunScript(script.floppy,login)</data>
-          <constraints>
-            <allowempty>true</allowempty>
-          </constraints>
-          <control type="button" format="action"/>
+          <control type="button" format="action">
+            <data>RunScript(script.floppy,login)</data>
+            <close>true</close>
+          </control>
         </setting>
         <setting id="api_key" type="string" label="30012">
           <level>2</level>
@@ -34,11 +33,10 @@
         </setting>
         <setting id="logout" type="action" label="30013">
           <level>0</level>
-          <data>RunScript(script.floppy,logout)</data>
-          <constraints>
-            <allowempty>true</allowempty>
-          </constraints>
-          <control type="button" format="action"/>
+          <control type="button" format="action">
+            <data>RunScript(script.floppy,logout)</data>
+            <close>true</close>
+          </control>
         </setting>
       </group>
       <group id="sync" label="30002">
@@ -73,27 +71,24 @@
       <group id="actions" label="30003">
         <setting id="sync_now" type="action" label="30030">
           <level>0</level>
-          <data>RunScript(script.floppy,sync_now)</data>
-          <constraints>
-            <allowempty>true</allowempty>
-          </constraints>
-          <control type="button" format="action"/>
+          <control type="button" format="action">
+            <data>RunScript(script.floppy,sync_now)</data>
+            <close>true</close>
+          </control>
         </setting>
         <setting id="restore" type="action" label="30031">
           <level>0</level>
-          <data>RunScript(script.floppy,restore)</data>
-          <constraints>
-            <allowempty>true</allowempty>
-          </constraints>
-          <control type="button" format="action"/>
+          <control type="button" format="action">
+            <data>RunScript(script.floppy,restore)</data>
+            <close>true</close>
+          </control>
         </setting>
         <setting id="push_history" type="action" label="30032">
           <level>0</level>
-          <data>RunScript(script.floppy,push_history)</data>
-          <constraints>
-            <allowempty>true</allowempty>
-          </constraints>
-          <control type="button" format="action"/>
+          <control type="button" format="action">
+            <data>RunScript(script.floppy,push_history)</data>
+            <close>true</close>
+          </control>
         </setting>
       </group>
     </category>

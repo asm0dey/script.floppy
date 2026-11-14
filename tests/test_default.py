@@ -63,6 +63,23 @@ def test_login_cancelled_stores_nothing():
         actions.main(["default.py", "login"])
     assert _store().get("access_token") is None
     assert NOTIFIED == []
+    assert not any(kind == "ok" for kind, _ in xbmcgui.CALLS)  # user cancelled: no error
+
+
+def test_login_denied_explains_why():
+    device = {"device_code": "d", "user_code": "U", "verification_uri": "v", "interval": 0}
+    with FakeFloppy() as fake:
+        fake.route("POST", "/oauth/register", lambda r: (200, {"client_id": "cid"}))
+        fake.route("POST", "/oauth/device/authorization", lambda r: (200, device))
+        fake.route("POST", "/oauth/token", lambda r: (400, {"error": "access_denied"}))
+        xbmcaddon.SETTINGS["server_url"] = fake.url
+        actions.main(["default.py", "login"])
+    assert _store().get("access_token") is None
+    assert (
+        "ok",
+        ("Floppy", "Login failed: the code expired or the request was denied."),
+    ) in xbmcgui.CALLS
+    assert NOTIFIED == []
 
 
 SYNC_KEYS = (
@@ -94,6 +111,22 @@ def test_logout_clears_sync_state(revoke_status):
         assert fake.requests[0].form == {"token": "r1", "client_id": "cid"}
     assert all(store.get(k) is None for k in SYNC_KEYS)
     assert store.get("client_id") == "cid"
+
+
+def test_logout_with_api_key_stays_logged_out(monkeypatch):
+    from floppy import service_loop
+
+    monkeypatch.setattr(service_loop, "flush_outbox", lambda s, server: None)
+    monkeypatch.setattr(service_loop, "run_sync", lambda *a, **kw: "incremental")
+    xbmcaddon.SETTINGS["api_key"] = "k1"
+    Path(xbmcaddon.INFO["profile"]).mkdir(parents=True)
+    store = _store()
+    service = service_loop.Service(store)
+    service.tick(1000.0)
+    assert store.get("api_key") == "k1"
+    actions.main(["default.py", "logout"])  # no server URL: nothing to revoke
+    service.tick(1005.0)
+    assert store.get("api_key") is None and xbmcaddon.SETTINGS["api_key"] == ""
 
 
 @pytest.mark.parametrize(

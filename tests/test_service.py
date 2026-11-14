@@ -133,10 +133,14 @@ def test_no_server_url_no_network(store, fake_sync):
     assert SYNCS == [] and FLUSHES == []
 
 
-def test_api_key_setting_copied_to_store(store, fake_sync):
+def test_api_key_setting_mirrored_to_store(store, fake_sync):
     xbmcaddon.SETTINGS["api_key"] = "k1"
-    service_loop.Service(store).tick(1000.0)
+    service = service_loop.Service(store)
+    service.tick(1000.0)
     assert store.get("api_key") == "k1"
+    xbmcaddon.SETTINGS["api_key"] = ""
+    service.tick(1005.0)
+    assert store.get("api_key") is None
 
 
 def test_auth_required_notifies_once_and_pauses(store, monkeypatch):
