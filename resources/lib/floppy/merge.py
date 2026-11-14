@@ -6,7 +6,6 @@ Pure: no I/O. Merge, never replace (spec "Sync engine -> Baseline", "Play counts
 from __future__ import annotations
 
 import hashlib
-import itertools
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -75,14 +74,25 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
     floppy_watched = by_key(watched)
     floppy_progress = by_key(progress)
     plan = MergePlan()
-    # Catch-up candidates grouped by identity: Kodi copies whose ref keys overlap are one item
-    # and must add one play, from the copy with the latest lastplayed.
-    group_of: dict[str, int] = {}
-    groups: dict[int, tuple[set[str], KodiItem]] = {}
-    group_ids = itertools.count()
+    # Kodi copies whose ref keys overlap are one identity: it adds at most one catch-up play
+    # (from the copy with the latest lastplayed), and none if any copy has a Floppy row.
+    parent = list(range(len(library)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    first_with_key: dict[str, int] = {}
+    for i, item in enumerate(library):
+        for k in item.ref.keys():
+            parent[root(i)] = root(first_with_key.setdefault(k, i))
+    catch_up: dict[int, KodiItem] = {}  # identity root -> copy with the latest lastplayed
+    has_floppy_row: set[int] = set()
     progress_pushes: list[tuple[str, dict]] = []
 
-    for item in library:
+    for i, item in enumerate(library):
         playcount: int | None = None
         lastplayed: str | None = None
         resume: tuple[float, float] | None = None
@@ -93,6 +103,8 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
         newly_watched = False
 
         floppy_state = w.get("watched") if w else None
+        if w:
+            has_floppy_row.add(root(i))
         if w and floppy_state is True:
             floppy_count = w.get("play_count") or 0
             if not kodi_watched:
@@ -104,17 +116,9 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
             elif item.playcount < floppy_count:
                 playcount = floppy_count  # raise only; Floppy's count is never raised from Kodi
         elif kodi_watched and w is None:
-            keys = set(ref.keys())
-            best = item
-            for gid in {group_of[k] for k in keys if k in group_of}:
-                other_keys, other = groups.pop(gid)
-                keys |= other_keys
-                if (other.lastplayed or "") >= (best.lastplayed or ""):
-                    best = other
-            gid = next(group_ids)
-            groups[gid] = (keys, best)
-            for k in keys:
-                group_of[k] = gid
+            best = catch_up.get(root(i))
+            if best is None or (item.lastplayed or "") > (best.lastplayed or ""):
+                catch_up[root(i)] = item
         elif kodi_watched and floppy_state is False:  # explicitly unwatched: Floppy wins
             playcount = 0
             plan.unwatch_kodi += 1
@@ -162,7 +166,8 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
         if playcount is not None or resume is not None:
             plan.to_kodi.append(KodiWrite(item, playcount, lastplayed, resume))
 
-    for _keys, item in groups.values():
+    pushes = [item for r, item in catch_up.items() if r not in has_floppy_row]
+    for item in pushes:
         key = item.ref.key()
         played_at = kodi_time_to_utc_iso(item.lastplayed) if item.lastplayed else None
         payload = {
@@ -179,6 +184,6 @@ def plan_baseline(library: list[KodiItem], watched: list[dict], progress: list[d
         plan.to_floppy.append(("scrobble", payload))
     # Progress after every stop, so a completing stop never lands after and clears it.
     plan.to_floppy += progress_pushes
-    plan.push_floppy = len(groups)
+    plan.push_floppy = len(pushes)
     plan.unmatched = len(unmatched) + rejected
     return plan

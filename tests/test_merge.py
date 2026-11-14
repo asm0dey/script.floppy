@@ -312,3 +312,13 @@ def test_episode_through_plan_baseline():
     assert kind == "scrobble"
     assert payload["ref_key"] == "episode:tvdb:81189:2:5"
     assert (payload["season_number"], payload["episode_number"]) == (2, 5)
+
+
+def test_no_catch_up_when_any_overlapping_copy_has_a_floppy_row():
+    imdb_only = Ref("movie", (("imdb", "tt1"),), None, None)
+    a = _item(playcount=1, lastplayed="2024-08-01 20:00:00", dbid=1, ref=imdb_only)
+    b = _item(playcount=1, lastplayed="2024-03-04 05:06:07", dbid=2)  # tmdb + imdb
+    for watched in (True, False, None):
+        plan = plan_baseline([a, b], [_w(watched=watched, ids={"tmdb": "11"})], [])
+        assert plan.to_floppy == []
+        assert plan.push_floppy == 0
