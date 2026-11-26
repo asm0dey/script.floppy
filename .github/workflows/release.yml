@@ -17,15 +17,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
-          python-version: "3.11"
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+          python-version: "3.15"
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       - run: uv sync --locked --extra dev --no-install-project --no-build
       - run: uv run --no-sync python -c "import sys; assert sys.version.startswith('3.11'), sys.version"
       - run: uv run --no-sync python tools/check_version.py "$TAG"
       - run: uv run --no-sync --no-build ruff check .
       - run: uv run --no-sync --no-build pyright
       - run: uv run --no-sync --no-build pytest -v --strict-markers
-      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
       - run: mise run zip
       - name: Checksum
         run: |
